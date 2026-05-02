@@ -1,0 +1,124 @@
+{
+  "version": 1,
+  "units": "meters",
+  "room": {
+    "bounds": {
+      "minX": -2.0,
+      "maxX": 2.0,
+      "minZ": -3.0,
+      "maxZ": 3.0
+    },
+    "eyeHeight": 1.6
+  },
+  "objects": [
+    {
+      "id": "bed_01",
+      "classId": 0,
+      "className": "bed",
+      "asset": "assets/models/bed.glb",
+      "position": {"x": 0.8, "y": 0.0, "z": -1.8},
+      "rotationEulerDeg": {"x": 0, "y": 90, "z": 0},
+      "scale": {"x": 1, "y": 1, "z": 1}
+    },
+    {
+      "id": "sofa_01",
+      "classId": 1,
+      "className": "sofa",
+      "asset": "assets/models/sofa.glb",
+      "position": {"x": -0.9, "y": 0.0, "z": -1.2},
+      "rotationEulerDeg": {"x": 0, "y": 35, "z": 0},
+      "scale": {"x": 1, "y": 1, "z": 1}
+    },
+    {
+      "id": "chair_01",
+      "classId": 2,
+      "className": "chair",
+      "asset": "assets/models/chair.glb",
+      "position": {"x": -0.35, "y": 0.0, "z": 0.45},
+      "rotationEulerDeg": {"x": 0, "y": -30, "z": 0},
+      "scale": {"x": 1, "y": 1, "z": 1}
+    },
+    {
+      "id": "table_01",
+      "classId": 3,
+      "className": "table",
+      "asset": "assets/models/table.glb",
+      "position": {"x": 0.0, "y": 0.0, "z": 0.35},
+      "rotationEulerDeg": {"x": 0, "y": 0, "z": 0},
+      "scale": {"x": 1, "y": 1, "z": 1}
+    },
+    {
+      "id": "lamp_01",
+      "classId": 4,
+      "className": "lamp",
+      "asset": "assets/models/lamp.glb",
+      "position": {"x": 1.65, "y": 0.0, "z": 1.8},
+      "rotationEulerDeg": {"x": 0, "y": 0, "z": 0},
+      "scale": {"x": 1, "y": 1, "z": 1}
+    },
+    {
+      "id": "tv_01",
+      "classId": 5,
+      "className": "tv",
+      "asset": "assets/models/tv.glb",
+      "position": {"x": 1.72, "y": 0.0, "z": 0.1},
+      "rotationEulerDeg": {"x": 0, "y": -90, "z": 0},
+      "scale": {"x": 1, "y": 1, "z": 1}
+    },
+    {
+      "id": "laptop_01",
+      "classId": 6,
+      "className": "laptop",
+      "asset": "assets/models/laptop.glb",
+      "position": {"x": 0.05, "y": 0.0, "z": 0.35},
+      "rotationEulerDeg": {"x": 0, "y": 20, "z": 0},
+      "scale": {"x": 1, "y": 1, "z": 1}
+    },
+    {
+      "id": "wardrobe_01",
+      "classId": 7,
+      "className": "wardrobe",
+      "asset": "assets/models/wardrobe.glb",
+      "position": {"x": -1.7, "y": 0.0, "z": -2.4},
+      "rotationEulerDeg": {"x": 0, "y": 0, "z": 0},
+      "scale": {"x": 1, "y": 1, "z": 1}
+    },
+    {
+      "id": "window_01",
+      "classId": 8,
+      "className": "window",
+      "asset": "assets/models/window.glb",
+      "position": {"x": 0.0, "y": 1.1, "z": -2.95},
+      "rotationEulerDeg": {"x": 0, "y": 0, "z": 0},
+      "scale": {"x": 1, "y": 1, "z": 1}
+    },
+    {
+      "id": "door_01",
+      "classId": 9,
+      "className": "door",
+      "asset": "assets/models/door.glb",
+      "position": {"x": 0.0, "y": 0.0, "z": 2.95},
+      "rotationEulerDeg": {"x": 0, "y": 180, "z": 0},
+      "scale": {"x": 1, "y": 1, "z": 1}
+    },
+    {
+      "id": "plant_01",
+      "classId": 10,
+      "className": "potted plant",
+      "asset": "assets/models/potted_plant.glb",
+      "position": {"x": -1.55, "y": 0.0, "z": 1.55},
+      "rotationEulerDeg": {"x": 0, "y": -25, "z": 0},
+      "scale": {"x": 1, "y": 1, "z": 1}
+    },
+    {
+      "id": "photo_frame_01",
+      "classId": 11,
+      "className": "photo frame",
+      "asset": "assets/models/photo_frame.glb",
+      "position": {"x": 1.7, "y": 1.5, "z": -0.6},
+      "rotationEulerDeg": {"x": 0, "y": -90, "z": 0},
+      "scale": {"x": 1, "y": 1, "z": 1}
+    }
+  ]
+}
+

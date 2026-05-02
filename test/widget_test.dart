@@ -8,23 +8,32 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:doan/main.dart';
+import 'package:doan/screens/room_designer_screen.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  testWidgets('Room designer renders and allows adding an item', (
+    WidgetTester tester,
+  ) async {
+    tester.binding.window.physicalSizeTestValue = const Size(1400, 2200);
+    tester.binding.window.devicePixelRatioTestValue = 1.0;
+    addTearDown(() {
+      tester.binding.window.clearPhysicalSizeTestValue();
+      tester.binding.window.clearDevicePixelRatioTestValue();
+    });
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+    await tester.pumpWidget(
+      const MaterialApp(home: Scaffold(body: RoomDesignerScreen())),
+    );
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
+    expect(find.text('Room 3D Designer'), findsOneWidget);
+    expect(find.text('Sofa'), findsOneWidget);
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    await tester.tap(find.text('Tao nen phong'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Sofa'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Dang chon:'), findsOneWidget);
   });
 }

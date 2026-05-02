@@ -7,21 +7,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 class AuthService {
   // Cấu hình URL backend theo platform
   static String get baseUrl {
-    try {
-      if (Platform.isAndroid) {
-        return 'http://10.0.2.2:3000/api'; // Android emulator
-      } else if (Platform.isIOS) {
-        return 'http://localhost:3000/api'; // iOS simulator
-      }
-    } catch (e) {
-      print('Platform detection error: $e');
-    }
-    // Web hoặc các platform khác - dùng localhost
-    return 'http://localhost:3000/api';
+    return 'http://192.168.1.10:3000/api';
   }
   
   static const String userKey = 'user_data';
-  static const Duration requestTimeout = Duration(seconds: 15);
+  static const Duration requestTimeout = Duration(seconds: 30);
   
   // Đăng ký
   static Future<Map<String, dynamic>> register({
