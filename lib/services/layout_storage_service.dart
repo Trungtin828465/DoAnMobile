@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -11,6 +12,11 @@ class LayoutStorageService {
   static const String savedLayoutFileName = 'layout_saved.json';
 
   Future<LayoutData> loadLayout() async {
+    if (kIsWeb) {
+      final assetRaw = await rootBundle.loadString(seedLayoutAsset);
+      return LayoutData.fromJson(jsonDecode(assetRaw) as Map<String, dynamic>);
+    }
+
     final savedFile = await _getSavedLayoutFile();
     if (await savedFile.exists()) {
       final raw = await savedFile.readAsString();
@@ -21,10 +27,14 @@ class LayoutStorageService {
     return LayoutData.fromJson(jsonDecode(assetRaw) as Map<String, dynamic>);
   }
 
-  Future<File> saveLayout(LayoutData layout) async {
+  Future<String?> saveLayout(LayoutData layout) async {
+    if (kIsWeb) {
+      return null;
+    }
+
     final savedFile = await _getSavedLayoutFile();
     await savedFile.writeAsString(layout.toPrettyJson(), flush: true);
-    return savedFile;
+    return savedFile.path;
   }
 
   Future<File> _getSavedLayoutFile() async {

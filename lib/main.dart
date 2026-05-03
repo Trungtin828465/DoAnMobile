@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'screens/login_screen.dart';
 import 'screens/register_screen.dart';
 import 'screens/home_screen.dart';
+import 'screens/room_designer_screen.dart';
 import 'services/auth_service.dart';
 
 void main() {
@@ -19,7 +20,8 @@ class MyApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
         useMaterial3: true,
       ),
-      home: const SplashScreen(),
+      // home: const SplashScreen(),
+      home: const RoomDesignerScreen(),
       routes: {
         '/login': (context) => const LoginScreen(),
         '/register': (context) => const RegisterScreen(),
