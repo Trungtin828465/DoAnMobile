@@ -448,7 +448,7 @@ class _PresetChip extends StatelessWidget {
   }
 }
 
-class _DesignStep extends StatelessWidget {
+class _DesignStep extends StatefulWidget {
   const _DesignStep({
     required this.controller,
     required this.onBack,
@@ -462,49 +462,385 @@ class _DesignStep extends StatelessWidget {
   final ValueChanged<String> onMessage;
 
   @override
+  State<_DesignStep> createState() => _DesignStepState();
+}
+
+class _DesignStepState extends State<_DesignStep> {
+  void _openFurnitureModal() {
+    showDialog(
+      context: context,
+      builder: (context) => _FurnitureModal(
+        controller: widget.controller,
+        onSelected: (item) {
+          // Add item at center position
+          final box = context.findRenderObject() as RenderBox?;
+          if (box != null) {
+            final canvasSize = box.size;
+            final centerX = canvasSize.width / 2;
+            final centerY = canvasSize.height / 2;
+            widget.controller.addItemAtScreen(
+              Offset(centerX, centerY),
+              canvasSize,
+              item,
+            );
+          }
+          Navigator.pop(context);
+        },
+      ),
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        // Mobile-first: wide for tablets (768dp+)
-        final isWide = constraints.maxWidth >= 768;
-        final palette = _PalettePanel(
-          controller: controller,
-          onBack: onBack,
-          onSave: onSave,
-        );
-        final canvas = _RoomCanvas(
-          controller: controller,
+    return Stack(
+      children: [
+        // Full screen canvas
+        _RoomCanvas(
+          controller: widget.controller,
           onDropResult: (ok) {
             if (!ok) {
-              onMessage('Drop inside the room area.');
+              widget.onMessage('Thả trong vùng phòng.');
             }
           },
-        );
+        ),
 
-        if (isWide) {
-          return Row(
-            children: [
-              SizedBox(width: 340, child: palette),
-              const SizedBox(width: 16),
-              Expanded(child: canvas),
-            ],
-          );
-        }
-
-        return Column(
-          children: [
-            Expanded(
-              flex: 1,
-              child: palette,
+        // Header với nút back + save
+        Positioned(
+          top: 0,
+          left: 0,
+          right: 0,
+          child: Container(
+            color: Colors.white,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: Row(
+              children: [
+                IconButton(
+                  onPressed: widget.onBack,
+                  icon: const Icon(Icons.arrow_back, color: _textPrimary),
+                  tooltip: 'Quay lại',
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'Thiết kế phòng',
+                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.w700,
+                              color: _textPrimary,
+                            ),
+                      ),
+                      Text(
+                        '${widget.controller.roomWidth}×${widget.controller.roomHeight} cells',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: _textSecondary,
+                            ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (widget.controller.hasDoor)
+                  IconButton(
+                    onPressed: widget.onSave,
+                    icon: const Icon(Icons.save_alt, color: _accentColor),
+                    tooltip: 'Lưu',
+                  ),
+              ],
             ),
-            const SizedBox(height: 12),
+          ),
+        ),
+
+        // FAB để chọn đồ vật
+        Positioned(
+          bottom: 20,
+          left: 20,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              FloatingActionButton.extended(
+                onPressed: _openFurnitureModal,
+                icon: const Icon(Icons.add),
+                label: const Text('Thêm đồ vật'),
+                backgroundColor: _primaryColor,
+                foregroundColor: Colors.white,
+              ),
+              const SizedBox(height: 12),
+              // Door status
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: widget.controller.hasDoor
+                      ? _accentColor.withOpacity(0.12)
+                      : Color(0xFFFEA500).withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: widget.controller.hasDoor
+                        ? _accentColor.withOpacity(0.4)
+                        : Color(0xFFFEA500).withOpacity(0.4),
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      widget.controller.hasDoor ? Icons.check_circle : Icons.info_outline,
+                      color: widget.controller.hasDoor ? _accentColor : Color(0xFFFEA500),
+                      size: 16,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      widget.controller.hasDoor ? 'Có cửa ✓' : 'Cần cửa',
+                      style: TextStyle(
+                        color: widget.controller.hasDoor ? _accentColor : Color(0xFFFEA500),
+                        fontWeight: FontWeight.w600,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _FurnitureModal extends StatefulWidget {
+  const _FurnitureModal({
+    required this.controller,
+    required this.onSelected,
+  });
+
+  final RoomDesignerController controller;
+  final ValueChanged<FurnitureItem> onSelected;
+
+  @override
+  State<_FurnitureModal> createState() => _FurnitureModalState();
+}
+
+class _FurnitureModalState extends State<_FurnitureModal> {
+  String _selectedCategory = 'All';
+
+  final List<String> _categories = [
+    'All',
+    'Entry',
+    'Sleep',
+    'Seating',
+    'Dining',
+    'Storage',
+    'Decor',
+    'Tech',
+  ];
+
+  Map<String, List<FurnitureItem>> _groupByCategory() {
+    const categoryOrder = {
+      'Entry': ['door', 'window'],
+      'Sleep': ['bed'],
+      'Seating': ['sofa', 'chair'],
+      'Dining': ['table'],
+      'Storage': ['cabinet'],
+      'Decor': ['lamp', 'plant', 'frame'],
+      'Tech': ['tv', 'laptop'],
+    };
+
+    final grouped = <String, List<FurnitureItem>>{};
+    for (final category in categoryOrder.keys) {
+      grouped[category] = [];
+    }
+
+    for (final item in widget.controller.catalog) {
+      for (final entry in categoryOrder.entries) {
+        if (entry.value.contains(item.type)) {
+          grouped[entry.key]?.add(item);
+          break;
+        }
+      }
+    }
+
+    return grouped;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final grouped = _groupByCategory();
+    final categories = grouped.entries.where((e) => e.value.isNotEmpty).toList();
+    
+    final filteredItems = _selectedCategory == 'All'
+        ? widget.controller.catalog
+        : categories
+            .firstWhere((e) => e.key == _selectedCategory, orElse: () => MapEntry('', []))
+            .value;
+
+    return Dialog(
+      backgroundColor: _surfaceColor,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Header
+            Row(
+              children: [
+                const Icon(Icons.home_work, color: _primaryColor, size: 24),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'Chọn đồ vật',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.w700,
+                          color: _textPrimary,
+                        ),
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(Icons.close, color: _textSecondary),
+                  padding: const EdgeInsets.all(0),
+                  constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+
+            // Category filter
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  for (final cat in _categories)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      child: FilterChip(
+                        label: Text(cat),
+                        selected: _selectedCategory == cat,
+                        onSelected: (_) {
+                          setState(() => _selectedCategory = cat);
+                        },
+                        backgroundColor: Colors.transparent,
+                        selectedColor: _primaryColor.withOpacity(0.2),
+                        side: BorderSide(
+                          color: _selectedCategory == cat ? _primaryColor : _textSecondary.withOpacity(0.3),
+                        ),
+                        labelStyle: TextStyle(
+                          color: _selectedCategory == cat ? _primaryColor : _textPrimary,
+                          fontWeight: FontWeight.w500,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // Grid items
             Expanded(
-              flex: 2,
-              child: canvas,
+              child: GridView.builder(
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 2,
+                  crossAxisSpacing: 16,
+                  mainAxisSpacing: 16,
+                  childAspectRatio: 0.9,
+                ),
+                itemCount: filteredItems.length,
+                itemBuilder: (context, index) {
+                  final item = filteredItems[index];
+                  return _ModalFurnitureItem(
+                    item: item,
+                    onTap: () {
+                      widget.onSelected(item);
+                    },
+                  );
+                },
+              ),
             ),
           ],
-        );
-      },
+        ),
+      ),
+    );
+  }
+}
+
+class _ModalFurnitureItem extends StatelessWidget {
+  const _ModalFurnitureItem({
+    required this.item,
+    required this.onTap,
+  });
+
+  final FurnitureItem item;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        decoration: BoxDecoration(
+          color: _cardColor,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFFE2E8F0), width: 1.5),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.05),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Expanded(
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: item.color.withOpacity(0.08),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Image.asset(
+                  item.assetPath,
+                  fit: BoxFit.contain,
+                  errorBuilder: (context, error, stackTrace) {
+                    return Container(
+                      color: item.color.withOpacity(0.2),
+                      child: Icon(
+                        Icons.image_not_supported,
+                        color: item.color,
+                        size: 32,
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Text(
+                item.name,
+                style: const TextStyle(
+                  fontWeight: FontWeight.w700,
+                  color: _textPrimary,
+                  fontSize: 14,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
+        ),
+      ),
     );
   }
 }
