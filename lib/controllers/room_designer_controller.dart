@@ -451,8 +451,10 @@ class RoomDesignerController extends ChangeNotifier {
 
   void render(ui.Canvas canvas, ui.Size size) {
     final view = _buildViewTransform(size);
+    
+    // Clean background - light blue tone
     final backgroundPaint = ui.Paint()
-      ..color = const ui.Color(0xFFF7F4F0)
+      ..color = const ui.Color(0xFFFAFBFC)
       ..style = ui.PaintingStyle.fill;
     canvas.drawRect(ui.Rect.fromLTWH(0, 0, size.width, size.height), backgroundPaint);
 
@@ -460,46 +462,129 @@ class RoomDesignerController extends ChangeNotifier {
       return;
     }
 
-    final roomPaint = ui.Paint()
-      ..color = const ui.Color(0xFFFAF7F2)
+    // Room background - bright white
+    final roomBg = ui.Paint()
+      ..color = const ui.Color(0xFFFFFFFF)
       ..style = ui.PaintingStyle.fill;
-    canvas.drawRect(view.roomRect, roomPaint);
+    canvas.drawRect(view.roomRect, roomBg);
 
+    // Draw grid
     _drawGrid(canvas, view);
 
-    final borderPaint = ui.Paint()
-      ..color = const ui.Color(0xFF1E293B)
+    // Room shadow - subtle but visible
+    final shadowPaint = ui.Paint()
+      ..color = const ui.Color(0xFF1E293B).withOpacity(0.08)
       ..style = ui.PaintingStyle.stroke
-      ..strokeWidth = 2;
+      ..strokeWidth = 1;
+    canvas.drawRect(view.roomRect, shadowPaint);
+
+    // Main room border - bold blue
+    final borderPaint = ui.Paint()
+      ..color = const ui.Color(0xFF2563EB)
+      ..style = ui.PaintingStyle.stroke
+      ..strokeWidth = 3;
     canvas.drawRect(view.roomRect, borderPaint);
 
+    // Draw items with beautiful styling
     for (final item in _items) {
       final rect = view.itemRect(item, item.width, item.height);
       final isSelected = item.id == _selectedId;
       final isHovered = item.id == _hoveredId;
+      final itemColor = _paletteColor(item.type);
+
+      // Enhanced shadow for select/hover
+      if (isSelected || isHovered) {
+        final shadowPaint = ui.Paint()
+          ..color = itemColor.withOpacity(0.3)
+          ..maskFilter = const ui.MaskFilter.blur(ui.BlurStyle.normal, 12);
+        canvas.drawRRect(
+          ui.RRect.fromRectAndRadius(rect.inflate(3), const ui.Radius.circular(12)),
+          shadowPaint,
+        );
+      } else {
+        // Normal shadow
+        final shadowPaint = ui.Paint()
+          ..color = const ui.Color(0xFF1E293B).withOpacity(0.1)
+          ..maskFilter = const ui.MaskFilter.blur(ui.BlurStyle.normal, 6);
+        canvas.drawRRect(
+          ui.RRect.fromRectAndRadius(rect.inflate(1), const ui.Radius.circular(12)),
+          shadowPaint,
+        );
+      }
+
+      // Item background with gradient feel
       final fill = ui.Paint()
-        ..color = _paletteColor(item.type).withOpacity(0.85)
+        ..color = itemColor.withOpacity(0.95)
         ..style = ui.PaintingStyle.fill;
       canvas.drawRRect(
-        ui.RRect.fromRectAndRadius(rect, const ui.Radius.circular(8)),
+        ui.RRect.fromRectAndRadius(rect, const ui.Radius.circular(12)),
         fill,
       );
 
+      // Item border - white or colored
       final stroke = ui.Paint()
-        ..color = isSelected ? const ui.Color(0xFF0F172A) : const ui.Color(0xFF334155)
+        ..color = isSelected
+            ? const ui.Color(0xFFFFFFFF)
+            : itemColor.withOpacity(0.4)
         ..style = ui.PaintingStyle.stroke
-        ..strokeWidth = isSelected ? 2.5 : 1.5;
+        ..strokeWidth = isSelected ? 3 : 2;
       canvas.drawRRect(
-        ui.RRect.fromRectAndRadius(rect, const ui.Radius.circular(8)),
+        ui.RRect.fromRectAndRadius(rect, const ui.Radius.circular(12)),
         stroke,
       );
 
       _drawItemImage(canvas, rect, item);
 
+      // Always show label at bottom
+      _drawItemLabel(canvas, rect, item.name);
+
       if (isHovered) {
         _drawHoverLabel(canvas, rect, item.name);
       }
     }
+  }
+
+  void _drawItemLabel(ui.Canvas canvas, ui.Rect rect, String name) {
+    final textSpan = TextSpan(
+      text: name,
+      style: const TextStyle(
+        color: Color(0xFFFFFFFF),
+        fontSize: 11,
+        fontWeight: FontWeight.w600,
+      ),
+    );
+    
+    final textPainter = TextPainter(
+      text: textSpan,
+      textDirection: TextDirection.ltr,
+    );
+    textPainter.layout();
+
+    // Draw semi-transparent background for text
+    final textBgPaint = ui.Paint()
+      ..color = const ui.Color(0xFF000000).withOpacity(0.4)
+      ..style = ui.PaintingStyle.fill;
+    
+    final textBgRect = ui.Rect.fromLTWH(
+      rect.left + (rect.width - textPainter.width) / 2 - 6,
+      rect.bottom - 24,
+      textPainter.width + 12,
+      16,
+    );
+    
+    canvas.drawRRect(
+      ui.RRect.fromRectAndRadius(textBgRect, const ui.Radius.circular(4)),
+      textBgPaint,
+    );
+
+    // Draw text
+    textPainter.paint(
+      canvas,
+      Offset(
+        rect.left + (rect.width - textPainter.width) / 2,
+        rect.bottom - 22,
+      ),
+    );
   }
 
   void _drawItemImage(ui.Canvas canvas, ui.Rect rect, PlacedItem item) {
@@ -752,11 +837,13 @@ class RoomDesignerController extends ChangeNotifier {
   }
 
   void _drawGrid(ui.Canvas canvas, _ViewTransform view) {
+    // Draw subtle grid lines
     final gridPaint = ui.Paint()
-      ..color = const ui.Color(0xFFD0D7DE)
+      ..color = const ui.Color(0xFFE2E8F0)
       ..style = ui.PaintingStyle.stroke
       ..strokeWidth = 1;
 
+    // Vertical lines
     for (int x = 0; x <= view.roomWidth; x++) {
       final dx = view.topLeft.dx + x * view.cellWidth;
       canvas.drawLine(
@@ -766,6 +853,7 @@ class RoomDesignerController extends ChangeNotifier {
       );
     }
 
+    // Horizontal lines
     for (int y = 0; y <= view.roomHeight; y++) {
       final dy = view.topLeft.dy + y * view.cellHeight;
       canvas.drawLine(
