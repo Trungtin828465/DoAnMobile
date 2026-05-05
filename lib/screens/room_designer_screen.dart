@@ -2,6 +2,15 @@ import 'package:flutter/material.dart';
 
 import '../controllers/room_designer_controller.dart';
 
+const Color _primaryColor = Color(0xFF2563EB);
+const Color _accentColor = Color(0xFF10B981);
+const Color _surfaceColor = Color(0xFFF8FAFC);
+const Color _cardColor = Color(0xFFFFFFFF);
+const Color _textPrimary = Color(0xFF1E293B);
+const Color _textSecondary = Color(0xFF64748B);
+
+String _formatMeters(double value) => value.toStringAsFixed(1);
+
 class RoomDesignerScreen extends StatefulWidget {
   const RoomDesignerScreen({super.key});
 
@@ -21,8 +30,8 @@ class _RoomDesignerScreenState extends State<RoomDesignerScreen> {
     super.initState();
     _controller = RoomDesignerController();
     _controller.initialize();
-    _widthController = TextEditingController(text: '12');
-    _heightController = TextEditingController(text: '8');
+    _widthController = TextEditingController(text: '4');
+    _heightController = TextEditingController(text: '5');
   }
 
   @override
@@ -40,13 +49,13 @@ class _RoomDesignerScreenState extends State<RoomDesignerScreen> {
   }
 
   void _applyRoomSize() {
-    final width = int.tryParse(_widthController.text.trim());
-    final height = int.tryParse(_heightController.text.trim());
+    final width = double.tryParse(_widthController.text.trim());
+    final height = double.tryParse(_heightController.text.trim());
     if (width == null || height == null) {
       _showMessage('Please enter valid width and height.');
       return;
     }
-    _controller.setRoomSize(width: width, height: height);
+    _controller.setRoomSize(widthMeters: width, heightMeters: height);
   }
 
   void _saveToSession() {
@@ -66,7 +75,7 @@ class _RoomDesignerScreenState extends State<RoomDesignerScreen> {
     return ScaffoldMessenger(
       key: _messengerKey,
       child: Scaffold(
-        backgroundColor: const Color(0xFFF4F1EC),
+        backgroundColor: _surfaceColor,
         body: SafeArea(
           child: AnimatedBuilder(
             animation: _controller,
@@ -84,7 +93,8 @@ class _RoomDesignerScreenState extends State<RoomDesignerScreen> {
                       padding: const EdgeInsets.all(16),
                       child: LayoutBuilder(
                         builder: (context, constraints) {
-                          final isWide = constraints.maxWidth >= 980;
+                          // Mobile-first breakpoint for tablets
+                          final isWide = constraints.maxWidth >= 768;
                           final content = _controller.step ==
                                   RoomDesignerStep.size
                               ? _SizeStep(
@@ -98,11 +108,7 @@ class _RoomDesignerScreenState extends State<RoomDesignerScreen> {
                                   onSave: _saveToSession,
                                   onMessage: _showMessage,
                                 );
-                          return isWide
-                              ? content
-                              : SingleChildScrollView(
-                                  child: content,
-                                );
+                          return content;
                         },
                       ),
                     ),
@@ -131,46 +137,75 @@ class _Header extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
       decoration: const BoxDecoration(
         gradient: LinearGradient(
-          colors: [Color(0xFF0F172A), Color(0xFF1E293B)],
+          colors: [Color(0xFF1E293B), Color(0xFF334155)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
       ),
-      child: Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.grid_view, color: Colors.white),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '2D Room Layout Designer',
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w700,
-                      ),
+          Row(
+            children: [
+              if (step == RoomDesignerStep.design)
+                Image.asset(
+                  'assets/anh/logo.png',
+                  height: 40,
+                  width: 40,
+                  fit: BoxFit.contain,
+                  errorBuilder: (context, error, stackTrace) => Container(
+                    height: 40,
+                    width: 40,
+                    decoration: BoxDecoration(
+                      color: _primaryColor.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Icon(Icons.grid_view, color: _primaryColor, size: 20),
+                  ),
+                )
+              else
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: _primaryColor.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.grid_view, color: _primaryColor, size: 24),
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  subtitle,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: Colors.white70,
-                      ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Room Design Studio',
+                      style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w800,
+                          ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: Colors.white70,
+                          ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
-          ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.15),
-              borderRadius: BorderRadius.circular(999),
-            ),
-            child: Text(
-              step == RoomDesignerStep.size ? 'Size' : 'Design',
-              style: const TextStyle(color: Colors.white),
-            ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: _accentColor.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  step == RoomDesignerStep.size ? '1 of 2' : '2 of 2',
+                  style: const TextStyle(color: _accentColor, fontWeight: FontWeight.w600, fontSize: 12),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -191,188 +226,223 @@ class _SizeStep extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Expanded(
-          child: Card(
-            elevation: 0,
-            color: Colors.white,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+    return SingleChildScrollView(
+      child: Card(
+        elevation: 0,
+        color: _cardColor,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(24),
+        ),
+        shadowColor: Colors.black.withOpacity(0.08),
+        margin: const EdgeInsets.symmetric(horizontal: 0),
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Room size',
+                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w700,
+                      color: _textPrimary,
+                    ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Enter width and height in meters (m).',
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: _textSecondary,
+                    ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                '1 cell = ${_formatMeters(RoomDesignerController.metersPerCell)} m',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: _textSecondary,
+                      fontStyle: FontStyle.italic,
+                    ),
+              ),
+              const SizedBox(height: 16),
+              Row(
                 children: [
-                  Text(
-                    'Room size',
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Enter width and height (grid units).',
-                    style: Theme.of(context).textTheme.bodyMedium,
-                  ),
-                  const SizedBox(height: 16),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: widthController,
-                          keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(
-                            labelText: 'Width',
-                            border: OutlineInputBorder(),
-                          ),
-                        ),
+                  Expanded(
+                    child: TextField(
+                      controller: widthController,
+                      keyboardType:
+                          const TextInputType.numberWithOptions(
+                        decimal: true,
                       ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: TextField(
-                          controller: heightController,
-                          keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(
-                            labelText: 'Height',
-                            border: OutlineInputBorder(),
-                          ),
+                      decoration: InputDecoration(
+                        labelText: 'Width (m)',
+                        labelStyle: const TextStyle(color: _textSecondary),
+                        prefixIcon: const Icon(Icons.straighten, color: _primaryColor),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: _primaryColor, width: 2),
                         ),
                       ),
-                    ],
+                    ),
                   ),
-                  const SizedBox(height: 16),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      _PresetChip(
-                        label: '10 x 12',
-                        onTap: () {
-                          widthController.text = '10';
-                          heightController.text = '12';
-                        },
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: TextField(
+                      controller: heightController,
+                      keyboardType:
+                          const TextInputType.numberWithOptions(
+                        decimal: true,
                       ),
-                      _PresetChip(
-                        label: '12 x 18',
-                        onTap: () {
-                          widthController.text = '12';
-                          heightController.text = '18';
-                        },
-                      ),
-                      _PresetChip(
-                        label: '20 x 30',
-                        onTap: () {
-                          widthController.text = '20';
-                          heightController.text = '30';
-                        },
-                      ),
-                      _PresetChip(
-                        label: '40 x 60',
-                        onTap: () {
-                          widthController.text = '40';
-                          heightController.text = '60';
-                        },
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 20),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      onPressed: onApply,
-                      icon: const Icon(Icons.arrow_forward),
-                      label: const Text('Next: choose items'),
-                      style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        backgroundColor: const Color(0xFF1E293B),
-                        foregroundColor: Colors.white,
+                      decoration: InputDecoration(
+                        labelText: 'Height (m)',
+                        labelStyle: const TextStyle(color: _textSecondary),
+                        prefixIcon: const Icon(Icons.straighten, color: _primaryColor),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: _primaryColor, width: 2),
+                        ),
                       ),
                     ),
                   ),
                 ],
               ),
-            ),
-          ),
-        ),
-        const SizedBox(width: 16),
-        Expanded(
-          child: Card(
-            elevation: 0,
-            color: const Color(0xFF111827),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              const SizedBox(height: 20),
+              Text(
+                'Quick select',
+                style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                      fontWeight: FontWeight.w700,
+                      color: _textSecondary,
+                    ),
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
                 children: [
-                  Text(
-                    'Tips',
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w700,
-                        ),
+                  _PresetChip(
+                    label: '4 x 5 m',
+                    icon: Icons.home,
+                    onTap: () {
+                      widthController.text = '4';
+                      heightController.text = '5';
+                    },
                   ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    '- Use bigger size for larger layouts.\n'
-                    '- You can change size later, items will reset.\n'
-                    '- Start with 12x8 for quick tests.',
-                    style: TextStyle(color: Colors.white70, height: 1.4),
+                  _PresetChip(
+                    label: '3 x 4 m',
+                    icon: Icons.apartment,
+                    onTap: () {
+                      widthController.text = '3';
+                      heightController.text = '4';
+                    },
                   ),
-                  const SizedBox(height: 16),
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.08),
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: const Row(
-                      children: [
-                        Icon(Icons.drag_indicator, color: Colors.white70),
-                        SizedBox(width: 12),
-                        Expanded(
-                          child: Text(
-                            'Next step lets you drag furniture cards into the grid.',
-                            style: TextStyle(color: Colors.white70),
-                          ),
-                        ),
-                      ],
-                    ),
+                  _PresetChip(
+                    label: '5 x 7 m',
+                    icon: Icons.villa,
+                    onTap: () {
+                      widthController.text = '5';
+                      heightController.text = '7';
+                    },
+                  ),
+                  _PresetChip(
+                    label: '6 x 8 m',
+                    icon: Icons.house,
+                    onTap: () {
+                      widthController.text = '6';
+                      heightController.text = '8';
+                    },
                   ),
                 ],
               ),
-            ),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: onApply,
+                  icon: const Icon(Icons.arrow_forward),
+                  label: const Text('Continue to design'),
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    backgroundColor: _primaryColor,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    elevation: 0,
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
-      ],
+      ),
     );
   }
 }
 
 class _PresetChip extends StatelessWidget {
-  const _PresetChip({required this.label, required this.onTap});
+  const _PresetChip({
+    required this.label,
+    required this.onTap,
+    this.icon = Icons.check_circle_outline,
+  });
 
   final String label;
   final VoidCallback onTap;
+  final IconData icon;
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(999),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-        decoration: BoxDecoration(
-          color: const Color(0xFFF5F5F5),
-          borderRadius: BorderRadius.circular(999),
-          border: Border.all(color: const Color(0xFFE2E8F0)),
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        splashColor: _primaryColor.withOpacity(0.1),
+        highlightColor: _primaryColor.withOpacity(0.05),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xFFE2E8F0), width: 1.5),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.05),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, color: _primaryColor, size: 18),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: const TextStyle(
+                  fontWeight: FontWeight.w600,
+                  color: _textPrimary,
+                  fontSize: 13,
+                ),
+              ),
+            ],
+          ),
         ),
-        child: Text(label),
       ),
     );
   }
@@ -395,7 +465,8 @@ class _DesignStep extends StatelessWidget {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final isWide = constraints.maxWidth >= 980;
+        // Mobile-first: wide for tablets (768dp+)
+        final isWide = constraints.maxWidth >= 768;
         final palette = _PalettePanel(
           controller: controller,
           onBack: onBack,
@@ -413,7 +484,7 @@ class _DesignStep extends StatelessWidget {
         if (isWide) {
           return Row(
             children: [
-              SizedBox(width: 320, child: palette),
+              SizedBox(width: 340, child: palette),
               const SizedBox(width: 16),
               Expanded(child: canvas),
             ],
@@ -422,9 +493,15 @@ class _DesignStep extends StatelessWidget {
 
         return Column(
           children: [
-            palette,
-            const SizedBox(height: 16),
-            SizedBox(height: 420, child: canvas),
+            Expanded(
+              flex: 1,
+              child: palette,
+            ),
+            const SizedBox(height: 12),
+            Expanded(
+              flex: 2,
+              child: canvas,
+            ),
           ],
         );
       },
@@ -432,7 +509,7 @@ class _DesignStep extends StatelessWidget {
   }
 }
 
-class _PalettePanel extends StatelessWidget {
+class _PalettePanel extends StatefulWidget {
   const _PalettePanel({
     required this.controller,
     required this.onBack,
@@ -444,153 +521,462 @@ class _PalettePanel extends StatelessWidget {
   final VoidCallback onSave;
 
   @override
+  State<_PalettePanel> createState() => _PalettePanelState();
+}
+
+class _PalettePanelState extends State<_PalettePanel> {
+  String _selectedCategory = 'All';
+
+  final List<String> _categories = [
+    'All',
+    'Entry',
+    'Sleep',
+    'Seating',
+    'Dining',
+    'Storage',
+    'Decor',
+    'Tech',
+  ];
+
+  Map<String, List<FurnitureItem>> _groupByCategory() {
+    const categoryOrder = {
+      'Entry': ['door', 'window'],
+      'Sleep': ['bed'],
+      'Seating': ['sofa', 'chair'],
+      'Dining': ['table'],
+      'Storage': ['cabinet'],
+      'Decor': ['lamp', 'plant', 'frame'],
+      'Tech': ['tv', 'laptop'],
+    };
+
+    final grouped = <String, List<FurnitureItem>>{};
+    for (final category in categoryOrder.keys) {
+      grouped[category] = [];
+    }
+
+    for (final item in widget.controller.catalog) {
+      for (final entry in categoryOrder.entries) {
+        if (entry.value.contains(item.type)) {
+          grouped[entry.key]?.add(item);
+          break;
+        }
+      }
+    }
+
+    return grouped;
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final grouped = _groupByCategory();
+    final categories = grouped.entries.where((e) => e.value.isNotEmpty).toList();
+    
+    // Filter categories by selected filter
+    final filteredCategories = _selectedCategory == 'All'
+        ? categories
+        : categories.where((e) => e.key == _selectedCategory).toList();
+
     return Card(
       elevation: 0,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      color: _cardColor,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      shadowColor: Colors.black.withOpacity(0.08),
       child: Padding(
         padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                IconButton(
-                  onPressed: onBack,
-                  icon: const Icon(Icons.arrow_back),
-                  tooltip: 'Back',
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'Furniture library',
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Room: ${controller.roomWidth} x ${controller.roomHeight}',
-              style: Theme.of(context)
-                  .textTheme
-                  .bodyMedium
-                  ?.copyWith(color: Colors.black54),
-            ),
-            const SizedBox(height: 12),
-            Expanded(
-              child: SingleChildScrollView(
-                child: Wrap(
-                  spacing: 12,
-                  runSpacing: 12,
-                  children: controller.catalog
-                      .map(
-                        (item) => _PaletteItem(item: item),
-                      )
-                      .toList(growable: false),
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: controller.hasDoor
-                    ? const Color(0xFFE8F5E9)
-                    : const Color(0xFFFFF3E0),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Row(
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Header
+              Row(
                 children: [
-                  Icon(
-                    controller.hasDoor
-                        ? Icons.check_circle
-                        : Icons.info_outline,
-                    color: controller.hasDoor
-                        ? const Color(0xFF2E7D32)
-                        : const Color(0xFFEF6C00),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      controller.hasDoor
-                          ? 'Door added. You can save now.'
-                          : 'Door is required before saving.',
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: _primaryColor.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(10),
                     ),
+                    child: const Icon(Icons.home_work, color: _primaryColor, size: 20),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Furniture library',
+                          style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.w700,
+                                color: _textPrimary,
+                              ),
+                        ),
+                        Text(
+                          '${widget.controller.roomWidth}×${widget.controller.roomHeight} cells',
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                color: _textSecondary,
+                              ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: widget.onBack,
+                    icon: const Icon(Icons.close),
+                    color: _textSecondary,
+                    tooltip: 'Back',
+                    iconSize: 22,
+                    padding: const EdgeInsets.all(8),
                   ),
                 ],
               ),
-            ),
-            const SizedBox(height: 16),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: onSave,
-                icon: const Icon(Icons.save_alt),
-                label: const Text('Save to session'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF0F172A),
-                  foregroundColor: Colors.white,
+              const SizedBox(height: 12),
+              Divider(color: Colors.grey.shade200, height: 1),
+              const SizedBox(height: 12),
+
+              // Category filter buttons
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    for (final cat in _categories)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        child: FilterChip(
+                          label: Text(cat),
+                          selected: _selectedCategory == cat,
+                          onSelected: (_) {
+                            setState(() => _selectedCategory = cat);
+                          },
+                          backgroundColor: Colors.transparent,
+                          selectedColor: _primaryColor.withOpacity(0.2),
+                          side: BorderSide(
+                            color: _selectedCategory == cat ? _primaryColor : _textSecondary.withOpacity(0.3),
+                          ),
+                          labelStyle: TextStyle(
+                            color: _selectedCategory == cat ? _primaryColor : _textPrimary,
+                            fontWeight: FontWeight.w500,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
               ),
-            ),
-          ],
+              const SizedBox(height: 12),
+              Divider(color: Colors.grey.shade200, height: 1),
+              const SizedBox(height: 12),
+
+              // Categories with items (NO Expanded here!)
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  for (int i = 0; i < filteredCategories.length; i++) ...[
+                    _CategorySection(
+                      category: filteredCategories[i].key,
+                      items: filteredCategories[i].value,
+                    ),
+                    if (i < filteredCategories.length - 1)
+                      Column(
+                        children: [
+                          const SizedBox(height: 12),
+                          Divider(color: Colors.grey.shade100, height: 1),
+                          const SizedBox(height: 12),
+                        ],
+                      )
+                    else
+                      const SizedBox(height: 16),
+                  ]
+                ],
+              ),
+
+              // Door status
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: widget.controller.hasDoor
+                      ? _accentColor.withOpacity(0.12)
+                      : Color(0xFFFEA500).withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: widget.controller.hasDoor
+                        ? _accentColor.withOpacity(0.4)
+                        : Color(0xFFFEA500).withOpacity(0.4),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      widget.controller.hasDoor ? Icons.check_circle : Icons.info_outline,
+                      color: widget.controller.hasDoor ? _accentColor : Color(0xFFFEA500),
+                      size: 18,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        widget.controller.hasDoor
+                            ? 'Ready to save ✓'
+                            : 'Add a door first',
+                        style: TextStyle(
+                          color: widget.controller.hasDoor ? _accentColor : Color(0xFFFEA500),
+                          fontWeight: FontWeight.w600,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+
+              // Save button
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: widget.onSave,
+                  icon: const Icon(Icons.save_alt, size: 18),
+                  label: const Text('Save layout'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _accentColor,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    elevation: 0,
+                    padding: const EdgeInsets.symmetric(vertical: 11),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 }
 
-class _PaletteItem extends StatelessWidget {
+class _CategorySection extends StatelessWidget {
+  const _CategorySection({
+    required this.category,
+    required this.items,
+  });
+
+  final String category;
+  final List<FurnitureItem> items;
+
+  static const categoryIcons = {
+    'Entry': Icons.door_front_door,
+    'Sleep': Icons.bed,
+    'Seating': Icons.weekend,
+    'Dining': Icons.restaurant,
+    'Storage': Icons.storage,
+    'Decor': Icons.palette,
+    'Tech': Icons.devices,
+  };
+
+  static const categoryColors = {
+    'Entry': Color(0xFF8B6F47),
+    'Sleep': Color(0xFF5C6BC0),
+    'Seating': Color(0xFF26A69A),
+    'Dining': Color(0xFFEF6C00),
+    'Storage': Color(0xFF546E7A),
+    'Decor': Color(0xFF2E7D32),
+    'Tech': Color(0xFF1565C0),
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final icon = categoryIcons[category] ?? Icons.widgets;
+    final color = categoryColors[category] ?? _primaryColor;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(icon, color: color, size: 16),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              category,
+              style: const TextStyle(
+                fontWeight: FontWeight.w700,
+                color: _textPrimary,
+                fontSize: 12,
+              ),
+            ),
+            const SizedBox(width: 6),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Text(
+                '${items.length}',
+                style: TextStyle(
+                  color: color,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 11,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 10,
+          runSpacing: 10,
+          children: items.map((item) => _PaletteItem(item: item)).toList(),
+        ),
+      ],
+    );
+  }
+}
+
+class _PaletteItem extends StatefulWidget {
   const _PaletteItem({required this.item});
 
   final FurnitureItem item;
 
   @override
+  State<_PaletteItem> createState() => _PaletteItemState();
+}
+
+class _PaletteItemState extends State<_PaletteItem> {
+  bool _isHovered = false;
+
+  @override
   Widget build(BuildContext context) {
-    final chip = Container(
-      width: 140,
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
+    final widthMeters = widget.item.width * RoomDesignerController.metersPerCell;
+    final heightMeters = widget.item.height * RoomDesignerController.metersPerCell;
+
+    final chip = GestureDetector(
+      onLongPress: () => setState(() => _isHovered = !_isHovered),
+      child: MouseRegion(
+        onEnter: (_) => setState(() => _isHovered = true),
+        onExit: (_) => setState(() => _isHovered = false),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          width: 150,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: _cardColor,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: _isHovered
+                  ? _primaryColor.withOpacity(0.4)
+                  : const Color(0xFFE2E8F0),
+              width: _isHovered ? 2 : 1.5,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: _isHovered
+                    ? _primaryColor.withOpacity(0.15)
+                    : Colors.black.withOpacity(0.05),
+                blurRadius: _isHovered ? 12 : 8,
+                offset: Offset(0, _isHovered ? 6 : 2),
+              ),
+            ],
           ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          CircleAvatar(
-            backgroundColor: item.color.withOpacity(0.15),
-            foregroundColor: item.color,
-            child: Icon(item.icon),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                height: 65,
+                width: double.infinity,
+                decoration: BoxDecoration(
+                  color: widget.item.color.withOpacity(0.08),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                padding: const EdgeInsets.all(8),
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    Image.asset(
+                      widget.item.assetPath,
+                      fit: BoxFit.contain,
+                      errorBuilder: (context, error, stackTrace) {
+                        debugPrint('✗ Lỗi tải ${widget.item.assetPath}: $error');
+                        return Container(
+                          color: widget.item.color.withOpacity(0.2),
+                          child: Icon(
+                            Icons.image_not_supported,
+                            color: widget.item.color,
+                            size: 32,
+                          ),
+                        );
+                      },
+                    ),
+                    if (_isHovered)
+                      Container(
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.3),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Icon(
+                          Icons.drag_indicator,
+                          color: Colors.white,
+                          size: 20,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                widget.item.name,
+                style: const TextStyle(
+                  fontWeight: FontWeight.w700,
+                  color: _textPrimary,
+                  fontSize: 13,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                decoration: BoxDecoration(
+                  color: _primaryColor.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  '${_formatMeters(widthMeters)}×${_formatMeters(heightMeters)}m',
+                  style: const TextStyle(
+                    color: _primaryColor,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 10),
-          Text(
-            item.name,
-            style: const TextStyle(fontWeight: FontWeight.w700),
-          ),
-          const SizedBox(height: 4),
-          Text('${item.width} x ${item.height} cells'),
-        ],
+        ),
       ),
     );
 
     return Draggable<FurnitureItem>(
-      data: item,
+      data: widget.item,
       feedback: Material(
         color: Colors.transparent,
-        child: Opacity(opacity: 0.85, child: chip),
+        child: Opacity(
+          opacity: 0.9,
+          child: Transform.scale(
+            scale: 1.1,
+            child: chip,
+          ),
+        ),
       ),
-      childWhenDragging: Opacity(opacity: 0.4, child: chip),
+      childWhenDragging: Opacity(opacity: 0.3, child: chip),
       child: chip,
     );
   }
@@ -609,7 +995,6 @@ class _RoomCanvas extends StatefulWidget {
 class _RoomCanvasState extends State<_RoomCanvas> {
   String? _draggingId;
   Offset? _dragAnchor;
-  static const double _rotateHandleRadius = 14;
 
   Size _currentSize() {
     final renderBox = context.findRenderObject() as RenderBox?;
@@ -629,6 +1014,7 @@ class _RoomCanvasState extends State<_RoomCanvas> {
     if (rect != null) {
       _dragAnchor = position - rect.topLeft;
     }
+    debugPrint('Bat dau keo: $_draggingId');
   }
 
   void _updateDrag(Offset position) {
@@ -642,23 +1028,13 @@ class _RoomCanvasState extends State<_RoomCanvas> {
   }
 
   void _endDrag() {
+    if (_draggingId != null) {
+      debugPrint('Ket thuc keo: $_draggingId');
+    }
     _draggingId = null;
     _dragAnchor = null;
   }
 
-  bool _isRotateHandleHit(Offset position) {
-    final hoveredId = widget.controller.hoveredId;
-    if (hoveredId == null || !widget.controller.isRotatable(hoveredId)) {
-      return false;
-    }
-    final rect = widget.controller.itemScreenRect(hoveredId, _currentSize());
-    if (rect == null) {
-      return false;
-    }
-    final dx = position.dx - rect.center.dx;
-    final dy = position.dy - rect.center.dy;
-    return (dx * dx + dy * dy) <= _rotateHandleRadius * _rotateHandleRadius;
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -666,18 +1042,41 @@ class _RoomCanvasState extends State<_RoomCanvas> {
       onAcceptWithDetails: (details) {
         final box = context.findRenderObject() as RenderBox?;
         if (box == null) {
+          debugPrint('✗ Không lấy được RenderBox');
           widget.onDropResult(false);
           return;
         }
+        
+        // Chuyển global coordinate sang local (canvas coordinate)
         final local = box.globalToLocal(details.offset);
+        final size = _currentSize();
+        
+        debugPrint('📍 Drop coordinate:');
+        debugPrint('  Global: ${details.offset}');
+        debugPrint('  Local: $local');
+        debugPrint('  Canvas size: $size');
+        debugPrint('  Item: ${details.data.name}');
+        
         final ok = widget.controller.addItemAtScreen(
           local,
-          _currentSize(),
+          size,
           details.data,
         );
+        
+        if (ok) {
+          debugPrint('✓ Đã thêm ${details.data.name}');
+        } else {
+          debugPrint('✗ Thả ngoài phòng hoặc lỗi khác');
+        }
+        
         widget.onDropResult(ok);
       },
+      onWillAccept: (data) {
+        // Hỗ trợ visual feedback trên mobile
+        return data != null;
+      },
       builder: (context, candidateData, rejectedData) {
+        final isAccepting = candidateData.isNotEmpty;
         return MouseRegion(
           onHover: (event) => widget.controller.updateHoverAtScreen(
             event.localPosition,
@@ -687,13 +1086,6 @@ class _RoomCanvasState extends State<_RoomCanvas> {
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTapDown: (details) {
-              if (_isRotateHandleHit(details.localPosition)) {
-                final hoveredId = widget.controller.hoveredId;
-                if (hoveredId != null) {
-                  widget.controller.rotateItem(hoveredId);
-                }
-                return;
-              }
               final hit = widget.controller.hitTest(
                 details.localPosition,
                 _currentSize(),
@@ -704,15 +1096,23 @@ class _RoomCanvasState extends State<_RoomCanvas> {
             onPanUpdate: (details) => _updateDrag(details.localPosition),
             onPanEnd: (_) => _endDrag(),
             onPanCancel: _endDrag,
-            child: DecoratedBox(
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 150),
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(20),
-                gradient: const LinearGradient(
-                  colors: [Color(0xFFF9F7F3), Color(0xFFEDE7E1)],
+                gradient: LinearGradient(
+                  colors: isAccepting
+                      ? [const Color(0xFFF0F9FF), const Color(0xFFE0F2FE)]
+                      : [const Color(0xFFFAFBFC), const Color(0xFFF1F5F9)],
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                 ),
-                border: Border.all(color: const Color(0xFFE2E8F0)),
+                border: Border.all(
+                  color: isAccepting 
+                      ? _primaryColor.withOpacity(0.5)
+                      : const Color(0xFFE2E8F0),
+                  width: isAccepting ? 2 : 1,
+                ),
               ),
               child: CustomPaint(
                 painter: _RoomPainter(widget.controller),
@@ -751,7 +1151,18 @@ class _ErrorBanner extends StatelessWidget {
       color: const Color(0xFFB91C1C),
       child: Padding(
         padding: const EdgeInsets.all(8),
-        child: Text(message, style: const TextStyle(color: Colors.white)),
+        child: Row(
+          children: [
+            const Icon(Icons.error_outline, color: Colors.white, size: 20),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                message,
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w500),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

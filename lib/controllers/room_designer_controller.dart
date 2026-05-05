@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../services/session_storage.dart';
 
@@ -19,6 +20,8 @@ class FurnitureItem {
     required this.height,
     required this.icon,
     required this.color,
+    required this.assetPath,
+    required this.imageScale,
   });
 
   final String type;
@@ -27,6 +30,8 @@ class FurnitureItem {
   final int height;
   final IconData icon;
   final ui.Color color;
+  final String assetPath;
+  final double imageScale;
 }
 
 class PlacedItem {
@@ -38,7 +43,6 @@ class PlacedItem {
     required this.y,
     required this.width,
     required this.height,
-    required this.rotationQuarter,
   });
 
   final String id;
@@ -48,7 +52,6 @@ class PlacedItem {
   final int y;
   final int width;
   final int height;
-  final int rotationQuarter;
 
   PlacedItem copyWith({
     String? id,
@@ -58,7 +61,6 @@ class PlacedItem {
     int? y,
     int? width,
     int? height,
-    int? rotationQuarter,
   }) {
     return PlacedItem(
       id: id ?? this.id,
@@ -68,7 +70,6 @@ class PlacedItem {
       y: y ?? this.y,
       width: width ?? this.width,
       height: height ?? this.height,
-      rotationQuarter: rotationQuarter ?? this.rotationQuarter,
     );
   }
 
@@ -81,7 +82,6 @@ class PlacedItem {
       'y': y,
       'width': width,
       'height': height,
-      'rotationQuarter': rotationQuarter,
     };
   }
 
@@ -94,7 +94,6 @@ class PlacedItem {
       y: (json['y'] as num?)?.toInt() ?? 0,
       width: (json['width'] as num?)?.toInt() ?? 1,
       height: (json['height'] as num?)?.toInt() ?? 1,
-      rotationQuarter: (json['rotationQuarter'] as num?)?.toInt() ?? 0,
     );
   }
 }
@@ -104,20 +103,26 @@ class RoomDesignerController extends ChangeNotifier {
       : _sessionStorage = sessionStorage ?? createSessionStorage();
 
   static const String sessionKey = 'room_layout_2d';
+  static const double metersPerCell = 0.5;
+  static const double minRoomMeters = 2.0;
+  static const double maxRoomMeters = 20.0;
 
   final SessionStorage _sessionStorage;
 
   RoomDesignerStep _step = RoomDesignerStep.size;
-  int _roomWidth = 12;
-  int _roomHeight = 8;
+  int _roomWidth = 8;
+  int _roomHeight = 10;
   final List<PlacedItem> _items = <PlacedItem>[];
   String? _selectedId;
   String? _hoveredId;
   String? _errorMessage;
+  final Map<String, ui.Image> _imageCache = <String, ui.Image>{};
 
   RoomDesignerStep get step => _step;
   int get roomWidth => _roomWidth;
   int get roomHeight => _roomHeight;
+  double get roomWidthMeters => _roomWidth * metersPerCell;
+  double get roomHeightMeters => _roomHeight * metersPerCell;
   List<PlacedItem> get items => List.unmodifiable(_items);
   String? get selectedId => _selectedId;
   String? get hoveredId => _hoveredId;
@@ -128,17 +133,21 @@ class RoomDesignerController extends ChangeNotifier {
           type: 'door',
           name: 'Door',
           width: 2,
-          height: 3,
+          height: 2,
           icon: Icons.door_front_door,
           color: ui.Color(0xFF8D6E63),
+          assetPath: 'assets/anh/door.png',
+          imageScale: 0.9,
         ),
         FurnitureItem(
           type: 'bed',
           name: 'Bed',
-          width: 4,
+          width: 3,
           height: 3,
           icon: Icons.bed,
           color: ui.Color(0xFF5C6BC0),
+          assetPath: 'assets/anh/bed.png',
+          imageScale: 0.95,
         ),
         FurnitureItem(
           type: 'sofa',
@@ -147,6 +156,8 @@ class RoomDesignerController extends ChangeNotifier {
           height: 2,
           icon: Icons.weekend,
           color: ui.Color(0xFF26A69A),
+          assetPath: 'assets/anh/sofa.png',
+          imageScale: 0.95,
         ),
         FurnitureItem(
           type: 'table',
@@ -155,22 +166,28 @@ class RoomDesignerController extends ChangeNotifier {
           height: 2,
           icon: Icons.table_restaurant,
           color: ui.Color(0xFFEF6C00),
+          assetPath: 'assets/anh/table.png',
+          imageScale: 0.95,
         ),
         FurnitureItem(
           type: 'chair',
           name: 'Chair',
-          width: 1,
-          height: 1,
+          width: 2,
+          height: 2,
           icon: Icons.event_seat,
           color: ui.Color(0xFF7E57C2),
+          assetPath: 'assets/anh/chair.png',
+          imageScale: 0.9,
         ),
         FurnitureItem(
           type: 'cabinet',
           name: 'Cabinet',
-          width: 3,
-          height: 1,
+          width: 2,
+          height: 3,
           icon: Icons.kitchen,
           color: ui.Color(0xFF546E7A),
+          assetPath: 'assets/anh/cabinet.png',
+          imageScale: 0.9,
         ),
         FurnitureItem(
           type: 'lamp',
@@ -179,6 +196,8 @@ class RoomDesignerController extends ChangeNotifier {
           height: 1,
           icon: Icons.lightbulb,
           color: ui.Color(0xFFF9A825),
+          assetPath: 'assets/anh/lamp.png',
+          imageScale: 0.85,
         ),
         FurnitureItem(
           type: 'plant',
@@ -187,28 +206,55 @@ class RoomDesignerController extends ChangeNotifier {
           height: 1,
           icon: Icons.local_florist,
           color: ui.Color(0xFF2E7D32),
+          assetPath: 'assets/anh/plant.png',
+          imageScale: 0.9,
         ),
         FurnitureItem(
           type: 'tv',
           name: 'TV',
-          width: 3,
-          height: 1,
+          width: 2,
+          height: 2,
           icon: Icons.tv,
           color: ui.Color(0xFF1565C0),
+          assetPath: 'assets/anh/tv.png',
+          imageScale: 0.85,
         ),
         FurnitureItem(
-          type: 'wardrobe',
-          name: 'Wardrobe',
-          width: 3,
-          height: 4,
-          icon: Icons.checkroom,
+          type: 'laptop',
+          name: 'Laptop',
+          width: 2,
+          height: 2,
+          icon: Icons.laptop_mac,
+          color: ui.Color(0xFF455A64),
+          assetPath: 'assets/anh/laptop.png',
+          imageScale: 0.85,
+        ),
+        FurnitureItem(
+          type: 'frame',
+          name: 'Frame',
+          width: 1,
+          height: 1,
+          icon: Icons.photo,
           color: ui.Color(0xFF6D4C41),
+          assetPath: 'assets/anh/frame.png',
+          imageScale: 0.8,
+        ),
+        FurnitureItem(
+          type: 'window',
+          name: 'Window',
+          width: 2,
+          height: 1,
+          icon: Icons.window,
+          color: ui.Color(0xFF26C6DA),
+          assetPath: 'assets/anh/windown.png',
+          imageScale: 0.85,
         ),
       ];
 
   Future<void> initialize() async {
     try {
       _errorMessage = null;
+      await _preloadImages();
       final raw = _sessionStorage.read(sessionKey);
       if (raw != null && raw.isNotEmpty) {
         final decoded = jsonDecode(raw) as Map<String, dynamic>;
@@ -236,13 +282,21 @@ class RoomDesignerController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void setRoomSize({required int width, required int height}) {
-    _roomWidth = width.clamp(4, 80);
-    _roomHeight = height.clamp(4, 80);
+  void setRoomSize({required double widthMeters, required double heightMeters}) {
+    final safeWidth =
+        widthMeters.clamp(minRoomMeters, maxRoomMeters).toDouble();
+    final safeHeight =
+        heightMeters.clamp(minRoomMeters, maxRoomMeters).toDouble();
+    _roomWidth = _metersToCells(safeWidth);
+    _roomHeight = _metersToCells(safeHeight);
     _items.clear();
     _selectedId = null;
     _step = RoomDesignerStep.design;
-    debugPrint('Da chon kich thuoc ${_roomWidth}x${_roomHeight} (o luoi).');
+    debugPrint(
+      'Da chon kich thuoc ${safeWidth.toStringAsFixed(1)}x'
+      '${safeHeight.toStringAsFixed(1)}m '
+      '(${_roomWidth}x${_roomHeight} o luoi).',
+    );
     notifyListeners();
   }
 
@@ -275,26 +329,6 @@ class RoomDesignerController extends ChangeNotifier {
     notifyListeners();
   }
 
-  bool isRotatable(String id) {
-    final item = _findItemById(id);
-    if (item == null) {
-      return false;
-    }
-    return item.width != item.height;
-  }
-
-  void rotateItem(String id) {
-    final item = _findItemById(id);
-    if (item == null || item.width == item.height) {
-      return;
-    }
-    final nextRotation = (item.rotationQuarter + 1) % 4;
-    final rotated = item.copyWith(rotationQuarter: nextRotation);
-    final clamped = _clampItemToRoom(rotated);
-    _replaceSelected(clamped);
-    _selectedId = id;
-    debugPrint('Da xoay ${item.name} (rotation=${clamped.rotationQuarter}).');
-  }
 
   String? hitTest(ui.Offset position, ui.Size size) {
     final view = _buildViewTransform(size);
@@ -303,7 +337,7 @@ class RoomDesignerController extends ChangeNotifier {
     }
 
     for (final item in _items.reversed) {
-      final rect = _itemRect(view, item);
+      final rect = view.itemRect(item, item.width, item.height);
       if (rect.contains(position)) {
         return item.id;
       }
@@ -322,7 +356,7 @@ class RoomDesignerController extends ChangeNotifier {
     if (item == null) {
       return null;
     }
-    return _itemRect(view, item);
+    return view.itemRect(item, item.width, item.height);
   }
 
   bool addItemAtScreen(
@@ -332,15 +366,22 @@ class RoomDesignerController extends ChangeNotifier {
   ) {
     final view = _buildViewTransform(size);
     if (view == null) {
-      debugPrint('Khong the them do vat: view chua san sang.');
+      debugPrint('✗ View chưa sẵn sàng (size: $size)');
       return false;
     }
 
+    debugPrint('🔍 Adding item: ${item.name}');
+    debugPrint('  Position: $position');
+    debugPrint('  Canvas size: $size');
+    debugPrint('  Room rect: ${view.roomRect}');
+
     final grid = view.screenToGrid(position);
     if (grid == null) {
-      debugPrint('Khong the them do vat: keo ngoai vung phong.');
+      debugPrint('✗ Thả ngoài vùng phòng (grid=null)');
       return false;
     }
+
+    debugPrint('✓ Grid position: (${grid.x}, ${grid.y})');
 
     final clamped = _clampGrid(grid.x, grid.y, item.width, item.height);
     final placed = PlacedItem(
@@ -351,13 +392,10 @@ class RoomDesignerController extends ChangeNotifier {
       y: clamped.y,
       width: item.width,
       height: item.height,
-      rotationQuarter: 0,
     );
     _items.add(placed);
     _selectedId = placed.id;
-    debugPrint(
-      'Da them ${item.name} tai (${placed.x}, ${placed.y}) kich thuoc ${placed.width}x${placed.height}.',
-    );
+    debugPrint('✓ Thêm ${item.name} tại (${placed.x}, ${placed.y}) kích thước ${placed.width}x${placed.height}');
     notifyListeners();
     return true;
   }
@@ -378,12 +416,11 @@ class RoomDesignerController extends ChangeNotifier {
       return;
     }
 
-    final footprint = _footprintForItem(selected);
     final clamped = _clampGrid(
       grid.x,
       grid.y,
-      footprint.width,
-      footprint.height,
+      selected.width,
+      selected.height,
     );
     _replaceSelected(selected.copyWith(x: clamped.x, y: clamped.y));
   }
@@ -437,7 +474,7 @@ class RoomDesignerController extends ChangeNotifier {
     canvas.drawRect(view.roomRect, borderPaint);
 
     for (final item in _items) {
-      final rect = _itemRect(view, item);
+      final rect = view.itemRect(item, item.width, item.height);
       final isSelected = item.id == _selectedId;
       final isHovered = item.id == _hoveredId;
       final fill = ui.Paint()
@@ -457,47 +494,74 @@ class RoomDesignerController extends ChangeNotifier {
         stroke,
       );
 
-      _drawItemLabel(canvas, rect, _iconForType(item.type));
+      _drawItemImage(canvas, rect, item);
 
       if (isHovered) {
         _drawHoverLabel(canvas, rect, item.name);
-        if (item.width != item.height) {
-          _drawRotateHandle(canvas, rect);
-        }
       }
     }
   }
 
-  void _drawItemLabel(
+  void _drawItemImage(ui.Canvas canvas, ui.Rect rect, PlacedItem item) {
+    final image = _imageCache[item.type];
+    if (image == null) {
+      _drawFallbackColor(canvas, rect, item.type);
+      return;
+    }
+
+    final src = ui.Rect.fromLTWH(
+      0,
+      0,
+      image.width.toDouble(),
+      image.height.toDouble(),
+    );
+    final dst = _fitImageRect(rect, image, _imageScaleForType(item.type));
+    canvas.drawImageRect(
+      image,
+      src,
+      dst,
+      ui.Paint()..filterQuality = ui.FilterQuality.high,
+    );
+  }
+
+  void _drawFallbackColor(ui.Canvas canvas, ui.Rect rect, String type) {
+    final color = _paletteColor(type).withOpacity(0.6);
+    final bgPaint = ui.Paint()..color = color;
+    canvas.drawRect(rect, bgPaint);
+    _drawFallbackIcon(canvas, rect, _iconForType(type));
+  }
+
+  void _drawFallbackIcon(
     ui.Canvas canvas,
     ui.Rect rect,
     IconData? icon,
   ) {
-    if (icon != null) {
-      final iconText = TextSpan(
-        text: String.fromCharCode(icon.codePoint),
-        style: TextStyle(
-          fontSize: 18,
-          fontFamily: icon.fontFamily,
-          package: icon.fontPackage,
-          color: ui.Color(0xFF0F172A),
-        ),
-      );
-      final iconPainter = TextPainter(
-        text: iconText,
-        maxLines: 1,
-        textAlign: TextAlign.center,
-        textDirection: TextDirection.ltr,
-      );
-      iconPainter.layout(maxWidth: rect.width - 8);
-      iconPainter.paint(
-        canvas,
-        ui.Offset(
-          rect.center.dx - iconPainter.width / 2,
-          rect.center.dy - iconPainter.height / 2,
-        ),
-      );
+    if (icon == null) {
+      return;
     }
+    final iconText = TextSpan(
+      text: String.fromCharCode(icon.codePoint),
+      style: TextStyle(
+        fontSize: 18,
+        fontFamily: icon.fontFamily,
+        package: icon.fontPackage,
+        color: ui.Color(0xFF0F172A),
+      ),
+    );
+    final iconPainter = TextPainter(
+      text: iconText,
+      maxLines: 1,
+      textAlign: TextAlign.center,
+      textDirection: TextDirection.ltr,
+    );
+    iconPainter.layout(maxWidth: rect.width - 8);
+    iconPainter.paint(
+      canvas,
+      ui.Offset(
+        rect.center.dx - iconPainter.width / 2,
+        rect.center.dy - iconPainter.height / 2,
+      ),
+    );
   }
 
   void _drawHoverLabel(ui.Canvas canvas, ui.Rect rect, String label) {
@@ -538,44 +602,6 @@ class RoomDesignerController extends ChangeNotifier {
     );
   }
 
-  void _drawRotateHandle(ui.Canvas canvas, ui.Rect rect) {
-    const radius = 12.0;
-    final center = rect.center;
-    final paint = ui.Paint()
-      ..color = const ui.Color(0xFFFFFFFF)
-      ..style = ui.PaintingStyle.fill;
-    canvas.drawCircle(center, radius, paint);
-
-    final stroke = ui.Paint()
-      ..color = const ui.Color(0xFF0F172A)
-      ..style = ui.PaintingStyle.stroke
-      ..strokeWidth = 1.5;
-    canvas.drawCircle(center, radius, stroke);
-
-    final iconText = TextSpan(
-      text: String.fromCharCode(Icons.rotate_right.codePoint),
-      style: TextStyle(
-        fontSize: 14,
-        fontFamily: Icons.rotate_right.fontFamily,
-        package: Icons.rotate_right.fontPackage,
-        color: const ui.Color(0xFF0F172A),
-      ),
-    );
-    final painter = TextPainter(
-      text: iconText,
-      maxLines: 1,
-      textAlign: TextAlign.center,
-      textDirection: TextDirection.ltr,
-    );
-    painter.layout();
-    painter.paint(
-      canvas,
-      ui.Offset(
-        center.dx - painter.width / 2,
-        center.dy - painter.height / 2,
-      ),
-    );
-  }
 
   void _replaceSelected(PlacedItem item) {
     final index = _items.indexWhere((entry) => entry.id == item.id);
@@ -586,11 +612,6 @@ class RoomDesignerController extends ChangeNotifier {
     notifyListeners();
   }
 
-  PlacedItem _clampItemToRoom(PlacedItem item) {
-    final footprint = _footprintForItem(item);
-    final clamped = _clampGrid(item.x, item.y, footprint.width, footprint.height);
-    return item.copyWith(x: clamped.x, y: clamped.y);
-  }
 
   PlacedItem? _findItemById(String id) {
     for (final item in _items) {
@@ -606,6 +627,11 @@ class RoomDesignerController extends ChangeNotifier {
     return '$prefix-$stamp-${_items.length + 1}';
   }
 
+  int _metersToCells(double meters) {
+    final cells = (meters / metersPerCell).round();
+    return cells < 1 ? 1 : cells;
+  }
+
   _GridPoint _clampGrid(int x, int y, int width, int height) {
     final maxX = math.max(0, _roomWidth - width);
     final maxY = math.max(0, _roomHeight - height);
@@ -615,18 +641,6 @@ class RoomDesignerController extends ChangeNotifier {
     );
   }
 
-  _ItemFootprint _footprintForItem(PlacedItem item) {
-    final rotated = item.rotationQuarter % 2 == 1;
-    return _ItemFootprint(
-      width: rotated ? item.height : item.width,
-      height: rotated ? item.width : item.height,
-    );
-  }
-
-  ui.Rect _itemRect(_ViewTransform view, PlacedItem item) {
-    final footprint = _footprintForItem(item);
-    return view.itemRect(item, footprint.width, footprint.height);
-  }
 
   ui.Color _paletteColor(String type) {
     final match = catalog.firstWhere(
@@ -645,26 +659,88 @@ class RoomDesignerController extends ChangeNotifier {
     return null;
   }
 
+  double _imageScaleForType(String type) {
+    for (final item in catalog) {
+      if (item.type == type) {
+        return item.imageScale;
+      }
+    }
+    return 0.9;
+  }
+
+  ui.Rect _fitImageRect(ui.Rect rect, ui.Image image, double scale) {
+    final targetWidth = rect.width * scale;
+    final targetHeight = rect.height * scale;
+    final imageWidth = image.width.toDouble();
+    final imageHeight = image.height.toDouble();
+    if (imageWidth <= 0 || imageHeight <= 0) {
+      return rect;
+    }
+
+    final imageAspect = imageWidth / imageHeight;
+    final targetAspect = targetWidth / targetHeight;
+    double drawWidth;
+    double drawHeight;
+    if (imageAspect >= targetAspect) {
+      drawWidth = targetWidth;
+      drawHeight = targetWidth / imageAspect;
+    } else {
+      drawHeight = targetHeight;
+      drawWidth = targetHeight * imageAspect;
+    }
+
+    return ui.Rect.fromCenter(
+      center: rect.center,
+      width: drawWidth,
+      height: drawHeight,
+    );
+  }
+
+  Future<void> _preloadImages() async {
+    for (final item in catalog) {
+      if (_imageCache.containsKey(item.type)) {
+        continue;
+      }
+      try {
+        final data = await rootBundle.load(item.assetPath);
+        final codec = await ui.instantiateImageCodec(data.buffer.asUint8List());
+        final frame = await codec.getNextFrame();
+        _imageCache[item.type] = frame.image;
+        debugPrint('✓ Da tai ${item.assetPath}');
+      } catch (error) {
+        debugPrint('✗ Khong tai duoc ${item.assetPath}: $error - se dung icon fallback');
+      }
+    }
+  }
+
   _ViewTransform? _buildViewTransform(ui.Size size) {
     if (_roomWidth <= 0 || _roomHeight <= 0 || size.isEmpty) {
+      debugPrint('✗ Invalid view transform params: size=$size, room=${_roomWidth}x${_roomHeight}');
       return null;
     }
 
     const padding = 20.0;
-    final availableWidth = math.max(1, size.width - padding * 2);
-    final availableHeight = math.max(1, size.height - padding * 2);
-    const cellAspect = 2.0;
-    final cellHeight = math.min(
-      availableWidth / (_roomWidth * cellAspect),
+    final availableWidth = math.max(1, size.width - padding * 3);
+    final availableHeight = math.max(1, size.height - padding * 3);
+    final cellSize = math.min(
+      availableWidth / _roomWidth,
       availableHeight / _roomHeight,
     );
-    final cellWidth = cellHeight * cellAspect;
+    final cellWidth = cellSize;
+    final cellHeight = cellSize;
     final roomWidthPx = _roomWidth * cellWidth;
     final roomHeightPx = _roomHeight * cellHeight;
     final topLeft = ui.Offset(
       (size.width - roomWidthPx) / 2,
       (size.height - roomHeightPx) / 2,
     );
+
+    debugPrint('📐 View transform:');
+    debugPrint('  Canvas size: ${size.width}x${size.height}');
+    debugPrint('  Room: ${_roomWidth}x${_roomHeight} cells');
+    debugPrint('  Cell size: ${cellWidth.toStringAsFixed(2)}px');
+    debugPrint('  Room in pixels: ${roomWidthPx.toStringAsFixed(0)}x${roomHeightPx.toStringAsFixed(0)}');
+    debugPrint('  Top-left: (${topLeft.dx.toStringAsFixed(1)}, ${topLeft.dy.toStringAsFixed(1)})');
 
     return _ViewTransform(
       roomWidth: _roomWidth,
@@ -733,11 +809,15 @@ class _ViewTransform {
   }
 
   _GridPoint? screenToGrid(ui.Offset position) {
-    if (!roomRect.contains(position)) {
+    // Check with small tolerance for edge cases on mobile
+    final expandedRect = roomRect.inflate(2.0); // Add 2px tolerance
+    if (!expandedRect.contains(position)) {
+      debugPrint('  ✗ Vị trí $position không nằm trong phòng (roomRect: $roomRect)');
       return null;
     }
     final localX = (position.dx - topLeft.dx) / cellWidth;
     final localY = (position.dy - topLeft.dy) / cellHeight;
+    debugPrint('  ✓ Tính toán grid: localX=$localX, localY=$localY');
     return _GridPoint(x: localX.floor(), y: localY.floor());
   }
 
@@ -756,16 +836,5 @@ class _GridPoint {
 
   final int x;
   final int y;
-}
-
-class _ItemFootprint {
-  const _ItemFootprint({required this.width, required this.height});
-
-  final int width;
-  final int height;
-}
-
-extension _IterableFirstOrNull<E> on Iterable<E> {
-  E? get firstOrNull => isEmpty ? null : first;
 }
 
