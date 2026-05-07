@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../services/session_storage.dart';
+import '../services/room_service.dart';
 
 enum RoomDesignerStep { size, design }
 
@@ -305,6 +306,87 @@ class RoomDesignerController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Load existing room data (for edit mode)
+  void loadRoomData(Map<String, dynamic> roomData) {
+    // Load room size
+    final width = roomData['Width'] ?? 4;
+    final height = roomData['Height'] ?? 5;
+    _roomWidth = width.toInt();
+    _roomHeight = height.toInt();
+
+    // Load items
+    _items.clear();
+    final objects = roomData['Objects'] as List<dynamic>? ?? [];
+    for (final obj in objects) {
+      try {
+        // Map ObjectName to type
+        final objectName = (obj['ObjectName'] ?? obj['name'] ?? '').toLowerCase();
+        final type = _mapObjectNameToType(objectName);
+
+        final item = PlacedItem(
+          id: obj['id'] ?? obj['_id'] ?? 'item-${_items.length}',
+          type: type,
+          name: obj['ObjectName'] ?? obj['name'] ?? 'Item',
+          x: (obj['PosX'] ?? obj['x'] ?? 0).toInt(),
+          y: (obj['PosY'] ?? obj['y'] ?? 0).toInt(),
+          width: (obj['Width'] ?? obj['width'] ?? 1).toInt(),
+          height: (obj['Height'] ?? obj['height'] ?? 1).toInt(),
+        );
+        _items.add(item);
+        debugPrint('✓ Loaded item: ${item.name} (type: $type) at (${item.x}, ${item.y})');
+      } catch (e) {
+        debugPrint('✗ Error loading item: $e');
+      }
+    }
+
+    _selectedId = null;
+    _step = RoomDesignerStep.design;
+    debugPrint(
+      '✓ Room loaded: ${_roomWidth}x${_roomHeight} with ${_items.length} items',
+    );
+    notifyListeners();
+  }
+
+  /// Map ObjectName từ database sang type furniture
+  String _mapObjectNameToType(String objectName) {
+    switch (objectName.toLowerCase()) {
+      case 'door':
+      case 'cửa':
+        return 'door';
+      case 'bed':
+      case 'giường':
+        return 'bed';
+      case 'sofa':
+      case 'ghế sofa':
+        return 'sofa';
+      case 'table':
+      case 'bàn':
+        return 'table';
+      case 'chair':
+      case 'ghế':
+        return 'chair';
+      case 'cabinet':
+      case 'tủ':
+        return 'cabinet';
+      case 'lamp':
+      case 'đèn':
+        return 'lamp';
+      case 'mirror':
+      case 'gương':
+        return 'mirror';
+      case 'plant':
+      case 'cây':
+        return 'plant';
+      case 'shelf':
+      case 'kệ':
+        return 'shelf';
+      default:
+        // Mặc định là 'table' nếu không match
+        debugPrint('⚠️ Unknown furniture type: $objectName, defaulting to table');
+        return 'table';
+    }
+  }
+
   bool get hasDoor => _items.any((item) => item.type == 'door');
 
   void selectItem(String? id) {
@@ -443,6 +525,54 @@ class RoomDesignerController extends ChangeNotifier {
     _sessionStorage.write(sessionKey, jsonEncode(payload));
     debugPrint('Da luu layout vao session.');
     return SaveStatus.ok;
+  }
+
+  /// Lưu room vào API database
+  /// 
+  /// Parameters:
+  /// - userId: ID người dùng (từ login)
+  /// - roomName: Tên phòng (vd: "Phòng ngủ")
+  /// - roomType: Loại phòng (vd: "bedroom", "living", "kitchen")
+  /// 
+  /// Returns: true nếu lưu thành công, false nếu thất bại
+  Future<bool> saveRoomToAPI({
+    required String userId,
+    required String roomName,
+    required String roomType,
+  }) async {
+    if (_items.isEmpty) {
+      debugPrint('Khong the luu: chua co do vat nao.');
+      return false;
+    }
+    if (!hasDoor) {
+      debugPrint('Khong the luu: chua co cua (door).');
+      return false;
+    }
+
+    try {
+      // Import RoomService nếu chưa có
+      // ignore: avoid_relative_lib_imports
+      // import '../services/room_service.dart';
+      
+      final result = await RoomService.saveRoomLayout(
+        userId: userId,
+        roomName: roomName,
+        roomType: roomType,
+        width: _roomWidth,
+        height: _roomHeight,
+        items: _items,
+      );
+
+      if (result) {
+        debugPrint('✅ Lưu room $roomName thành công!');
+      } else {
+        debugPrint('❌ Lưu room thất bại');
+      }
+      return result;
+    } catch (e) {
+      debugPrint('❌ Exception khi lưu room: $e');
+      return false;
+    }
   }
 
   void clearSession() {

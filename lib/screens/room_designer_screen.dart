@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../controllers/room_designer_controller.dart';
+import '../models/user_model.dart';
 
 const Color _primaryColor = Color(0xFF2563EB);
 const Color _accentColor = Color(0xFF10B981);
@@ -12,7 +15,9 @@ const Color _textSecondary = Color(0xFF64748B);
 String _formatMeters(double value) => value.toStringAsFixed(1);
 
 class RoomDesignerScreen extends StatefulWidget {
-  const RoomDesignerScreen({super.key});
+  final Map<String, dynamic>? existingRoom;
+
+  const RoomDesignerScreen({super.key, this.existingRoom});
 
   @override
   State<RoomDesignerScreen> createState() => _RoomDesignerScreenState();
@@ -24,14 +29,30 @@ class _RoomDesignerScreenState extends State<RoomDesignerScreen> {
   late final TextEditingController _heightController;
   final GlobalKey<ScaffoldMessengerState> _messengerKey =
       GlobalKey<ScaffoldMessengerState>();
+  bool _isEditMode = false;
 
   @override
   void initState() {
     super.initState();
     _controller = RoomDesignerController();
     _controller.initialize();
-    _widthController = TextEditingController(text: '4');
-    _heightController = TextEditingController(text: '5');
+    
+    _isEditMode = widget.existingRoom != null;
+    
+    // Load room data nếu edit mode
+    if (_isEditMode) {
+      final room = widget.existingRoom!;
+      final width = (room['Width'] ?? 4).toString();
+      final height = (room['Height'] ?? 5).toString();
+      _widthController = TextEditingController(text: width);
+      _heightController = TextEditingController(text: height);
+      
+      // Load room data vào controller
+      _controller.loadRoomData(room);
+    } else {
+      _widthController = TextEditingController(text: '4');
+      _heightController = TextEditingController(text: '5');
+    }
   }
 
   @override
@@ -48,6 +69,169 @@ class _RoomDesignerScreenState extends State<RoomDesignerScreen> {
     );
   }
 
+  void _showSaveRoomDialog() async {
+    final roomNameController = TextEditingController();
+    
+    // Lấy user data từ storage
+    String userName = 'Người dùng';
+    String userId = '';
+    
+    try {
+      SharedPreferences prefs = await SharedPreferences.getInstance();
+      String? userJson = prefs.getString('user_data');
+      if (userJson != null) {
+        final userData = jsonDecode(userJson);
+        final user = User.fromJson(userData);
+        userName = user.fullName;
+        userId = user.id;
+      }
+    } catch (e) {
+      debugPrint('Lỗi lấy user data: $e');
+    }
+
+    if (!mounted) return;
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) {
+          String selectedType = 'bedroom';
+
+          return AlertDialog(
+            title: const Text('Lưu phòng thiết kế'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Hiển thị username (không input)
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Tên người dùng',
+                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12),
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                    decoration: BoxDecoration(
+                      color: _surfaceColor,
+                      border: Border.all(color: Colors.grey.shade300),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      userName,
+                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+                    ),
+                  ),
+
+                  // Room name field
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Tên phòng',
+                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: roomNameController,
+                    decoration: InputDecoration(
+                      hintText: 'vd: Phòng ngủ, Phòng khách',
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                    ),
+                  ),
+
+                  // Room type dropdown
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Loại phòng',
+                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12),
+                  ),
+                  const SizedBox(height: 8),
+                  DropdownButton<String>(
+                    isExpanded: true,
+                    value: selectedType,
+                    items: const [
+                      DropdownMenuItem(value: 'bedroom', child: Text('Phòng ngủ')),
+                      DropdownMenuItem(value: 'living', child: Text('Phòng khách')),
+                      DropdownMenuItem(value: 'kitchen', child: Text('Bếp')),
+                      DropdownMenuItem(value: 'bathroom', child: Text('Phòng tắm')),
+                      DropdownMenuItem(value: 'office', child: Text('Văn phòng')),
+                      DropdownMenuItem(value: 'dining', child: Text('Phòng ăn')),
+                      DropdownMenuItem(value: 'other', child: Text('Khác')),
+                    ],
+                    onChanged: (value) {
+                      if (value != null) {
+                        setState(() => selectedType = value);
+                      }
+                    },
+                  ),
+
+                  const SizedBox(height: 20),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: _primaryColor.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Text(
+                      '📍 Thông tin lưu: Tên phòng, kích thước, vị trí vật, ảnh vật',
+                      style: TextStyle(fontSize: 12, color: _textPrimary),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Hủy'),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(backgroundColor: _primaryColor),
+                onPressed: () async {
+                  final roomName = roomNameController.text.trim();
+
+                  if (roomName.isEmpty) {
+                    _showMessage('Vui lòng nhập tên phòng');
+                    return;
+                  }
+
+                  if (userId.isEmpty) {
+                    _showMessage('Lỗi: Không tìm thấy thông tin người dùng');
+                    return;
+                  }
+
+                  Navigator.pop(context);
+                  
+                  // Show loading
+                  _showMessage('Đang lưu...');
+
+                  // Call API
+                  final success = await _controller.saveRoomToAPI(
+                    userId: userId,
+                    roomName: roomName,
+                    roomType: selectedType,
+                  );
+
+                  if (success) {
+                    _showMessage('✅ Lưu phòng thành công!');
+                    // Redirect về home sau 1.5 giây
+                    await Future.delayed(const Duration(milliseconds: 1500));
+                    if (mounted) {
+                      Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
+                    }
+                  } else {
+                    _showMessage('❌ Lưu phòng thất bại, kiểm tra kết nối');
+                  }
+                },
+                child: const Text('Lưu'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
   void _applyRoomSize() {
     final width = double.tryParse(_widthController.text.trim());
     final height = double.tryParse(_heightController.text.trim());
@@ -58,16 +242,19 @@ class _RoomDesignerScreenState extends State<RoomDesignerScreen> {
     _controller.setRoomSize(widthMeters: width, heightMeters: height);
   }
 
-  void _saveToSession() {
-    final status = _controller.saveToSession();
-    switch (status) {
-      case SaveStatus.ok:
-        _showMessage('Saved to session.');
-      case SaveStatus.empty:
-        _showMessage('Add at least one item before saving.');
-      case SaveStatus.missingDoor:
-        _showMessage('Door is required before saving.');
+  void _handleBackButton() {
+    if (_isEditMode) {
+      // Edit mode: quay về home
+      Navigator.of(context).pushNamedAndRemoveUntil('/home', (route) => false);
+    } else {
+      // Create mode: quay về size step
+      _controller.backToSizeStep();
     }
+  }
+
+  void _saveToSession() {
+    // Hiển thị dialog để nhập thông tin phòng
+    _showSaveRoomDialog();
   }
 
   @override
@@ -82,7 +269,11 @@ class _RoomDesignerScreenState extends State<RoomDesignerScreen> {
             builder: (context, child) {
               return Column(
                 children: [
-                  _Header(step: _controller.step),
+                  _Header(
+                    step: _controller.step,
+                    onBack: _handleBackButton,
+                    isEditMode: _isEditMode,
+                  ),
                   if (_controller.errorMessage != null)
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -104,9 +295,10 @@ class _RoomDesignerScreenState extends State<RoomDesignerScreen> {
                                 )
                               : _DesignStep(
                                   controller: _controller,
-                                  onBack: _controller.backToSizeStep,
+                                  onBack: _handleBackButton,
                                   onSave: _saveToSession,
                                   onMessage: _showMessage,
+                                  isEditMode: _isEditMode,
                                 );
                           return content;
                         },
@@ -124,9 +316,15 @@ class _RoomDesignerScreenState extends State<RoomDesignerScreen> {
 }
 
 class _Header extends StatelessWidget {
-  const _Header({required this.step});
+  const _Header({
+    required this.step,
+    required this.onBack,
+    this.isEditMode = false,
+  });
 
   final RoomDesignerStep step;
+  final VoidCallback onBack;
+  final bool isEditMode;
 
   @override
   Widget build(BuildContext context) {
@@ -147,6 +345,19 @@ class _Header extends StatelessWidget {
         children: [
           Row(
             children: [
+              // Back button
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: IconButton(
+                  icon: const Icon(Icons.arrow_back, color: Colors.white),
+                  onPressed: onBack,
+                  tooltip: 'Quay lại',
+                ),
+              ),
+              const SizedBox(width: 12),
               if (step == RoomDesignerStep.design)
                 Image.asset(
                   'assets/anh/logo.png',
@@ -178,7 +389,7 @@ class _Header extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Room Design Studio',
+                      isEditMode ? 'Sửa phòng' : 'Room Design Studio',
                       style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                             color: Colors.white,
                             fontWeight: FontWeight.w800,
@@ -454,12 +665,14 @@ class _DesignStep extends StatefulWidget {
     required this.onBack,
     required this.onSave,
     required this.onMessage,
+    this.isEditMode = false,
   });
 
   final RoomDesignerController controller;
   final VoidCallback onBack;
   final VoidCallback onSave;
   final ValueChanged<String> onMessage;
+  final bool isEditMode;
 
   @override
   State<_DesignStep> createState() => _DesignStepState();
@@ -526,7 +739,7 @@ class _DesignStepState extends State<_DesignStep> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(
-                        'Thiết kế phòng',
+                        widget.isEditMode ? 'Sửa phòng' : 'Thiết kế phòng',
                         style: Theme.of(context).textTheme.titleMedium?.copyWith(
                               fontWeight: FontWeight.w700,
                               color: _textPrimary,

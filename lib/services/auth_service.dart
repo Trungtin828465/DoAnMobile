@@ -6,7 +6,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 class AuthService {
   // Cấu hình URL backend theo platform
   static String get baseUrl {
-    return 'http://192.168.1.10:3000/api';
+    // return 'http://192.168.1.10:3000/api';
+    return 'http://localhost:3000/api';
   }
   
   static const String userKey = 'user_data';
