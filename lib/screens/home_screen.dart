@@ -6,6 +6,7 @@ import '../controllers/auth_controller.dart';
 import '../models/user_model.dart';
 import '../services/room_service.dart';
 import 'room_designer_screen.dart';
+import 'chat_screen.dart';
 
 const Color _primaryColor = Color(0xFF2563EB);
 const Color _accentColor = Color(0xFF10B981);
@@ -137,6 +138,15 @@ class _HomeScreenState extends State<HomeScreen> {
             child: const Text('Xóa'),
           ),
         ],
+      ),
+    );
+  }
+
+  void _handleChatWithAI(String roomName) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ChatScreen(roomName: roomName),
       ),
     );
   }
@@ -381,6 +391,16 @@ class _HomeScreenState extends State<HomeScreen> {
                                     ],
                                   ),
                                   onTap: () => _handleSelectRoom(room),
+                                ),
+                                PopupMenuItem(
+                                  child: const Row(
+                                    children: [
+                                      Icon(Icons.chat, size: 20, color: Color(0xFF10B981)),
+                                      SizedBox(width: 8),
+                                      Text('💬 AI Chat', style: TextStyle(color: Color(0xFF10B981))),
+                                    ],
+                                  ),
+                                  onTap: () => _handleChatWithAI(roomName),
                                 ),
                                 PopupMenuItem(
                                   child: const Row(

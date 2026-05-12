@@ -3,12 +3,12 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../controllers/room_designer_controller.dart';
+import '../config/env.dart';
 
 class RoomService {
-  // Cấu hình URL backend theo platform (cùng với AuthService)
+  // Lấy baseUrl từ .env
   static String get baseUrl {
-    // return 'http://192.168.1.10:3000/api';
-    return 'http://localhost:3000/api';
+      return EnvConfig.baseUrl;
   }
 
   static const Duration requestTimeout = Duration(seconds: 30);

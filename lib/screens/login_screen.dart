@@ -5,7 +5,6 @@ import '../controllers/auth_controller.dart';
 const Color _primaryColor = Color(0xFF2563EB);
 const Color _accentColor = Color(0xFF10B981);
 const Color _surfaceColor = Color(0xFFF8FAFC);
-const Color _cardColor = Color(0xFFFFFFFF);
 const Color _textPrimary = Color(0xFF1E293B);
 const Color _textSecondary = Color(0xFF64748B);
 

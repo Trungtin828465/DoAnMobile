@@ -1,4 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Required permissions for speech-to-text and AI features -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    
     <application
         android:label="AI SP"
         android:name="${applicationName}"
@@ -23,6 +27,12 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+            
+            <!-- Support for speech recognition -->
+            <intent-filter>
+                <action android:name="android.speech.action.RECOGNIZE_SPEECH"/>
+                <category android:name="android.intent.category.DEFAULT"/>
             </intent-filter>
         </activity>
         <!-- Don't delete the meta-data below.

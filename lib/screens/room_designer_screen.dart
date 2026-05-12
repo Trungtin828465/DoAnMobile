@@ -284,8 +284,6 @@ class _RoomDesignerScreenState extends State<RoomDesignerScreen> {
                       padding: const EdgeInsets.all(16),
                       child: LayoutBuilder(
                         builder: (context, constraints) {
-                          // Mobile-first breakpoint for tablets
-                          final isWide = constraints.maxWidth >= 768;
                           final content = _controller.step ==
                                   RoomDesignerStep.size
                               ? _SizeStep(

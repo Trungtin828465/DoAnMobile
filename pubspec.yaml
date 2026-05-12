@@ -39,6 +39,9 @@ dependencies:
   vector_math: ^2.1.4
   path_provider: ^2.1.5
   flutter_joystick: ^0.2.2
+  speech_to_text: ^6.1.0
+  audioplayers: ^5.2.0
+  flutter_dotenv: ^5.1.0
 
 dev_dependencies:
   flutter_test:
@@ -62,6 +65,7 @@ flutter:
   # the material Icons class.
   uses-material-design: true
   assets:
+    - .env
     - assets/models/
     - assets/layouts/layout.json
     - assets/anh/

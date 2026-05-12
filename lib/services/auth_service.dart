@@ -2,12 +2,12 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import '../models/user_model.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../config/env.dart';
 
 class AuthService {
-  // Cấu hình URL backend theo platform
+  // Lấy baseUrl từ .env
   static String get baseUrl {
-    // return 'http://192.168.1.10:3000/api';
-    return 'http://localhost:3000/api';
+    return EnvConfig.baseUrl;
   }
   
   static const String userKey = 'user_data';
