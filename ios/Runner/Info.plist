@@ -45,5 +45,15 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Ứng dụng cần quyền micro để chuyển giọng nói thành văn bản trong màn chat.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Ứng dụng dùng nhận dạng giọng nói để nhập tin nhắn bằng giọng nói.</string>
+	<!-- Cho phép gọi TTS/stream audio qua HTTP tới LAN (vd. máy dev 192.168.x.x) -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
 </dict>
 </plist>

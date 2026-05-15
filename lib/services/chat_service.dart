@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../config/env.dart';
@@ -21,6 +22,9 @@ class ChatService {
   }
 
   static const Duration requestTimeout = Duration(seconds: 30);
+
+  /// Độ dài tối đa một lần gọi TTS (tránh URL / BE quá tải)
+  static const int ttsMaxChunkChars = 140;
 
   /// Gửi tin nhắn tới OpenRouter API
   static Future<String> sendMessage(String userMessage) async {
@@ -81,20 +85,56 @@ class ChatService {
     return '$ttsServerUrl?text=$encodedText&lang=vi';
   }
 
-  /// Tách text dài thành các câu (cách bằng dấu chấm)
-  /// Mỗi câu sẽ được phát riêng để tránh URL quá dài
+  /// Tách theo ranh giới câu (.!?。 …), chunk thêm nếu câu quá dài.
+  /// Mỗi đoạn = một request TTS để backend không nhận quá nhiều ký tự một lần.
   static List<String> splitTextForTTS(String text) {
-    // Tách theo dấu chấm (.), sau đó trim whitespace
-    final sentences = text
-        .split('.')
+    final t = text.trim();
+    if (t.isEmpty) return [];
+
+    final normalized =
+        t.replaceAll(RegExp(r'\r\n?'), '\n').replaceAll(RegExp(r'\s*\n\s*'), '. ');
+
+    var parts = normalized
+        .split(RegExp(r'[.!?。]+(?:\s+|$)', multiLine: true))
         .map((s) => s.trim())
         .where((s) => s.isNotEmpty)
         .toList();
 
-    if (sentences.isEmpty) {
-      return [text];
+    if (parts.isEmpty) {
+      parts = [normalized];
     }
 
-    return sentences;
+    final out = <String>[];
+    for (final p in parts) {
+      out.addAll(_chunkLongForTTS(p, ttsMaxChunkChars));
+    }
+
+    return out.isEmpty ? [t] : out;
+  }
+
+  /// Cắt đoạn dài tại chỗ thoáng (, ; : hoặc khoảng trắng) để không vượt [maxLen].
+  static List<String> _chunkLongForTTS(String text, int maxLen) {
+    final s = text.trim();
+    if (s.isEmpty) return [];
+    if (s.length <= maxLen) return [s];
+
+    final chunks = <String>[];
+    var start = 0;
+    while (start < s.length) {
+      final hardEnd = math.min(start + maxLen, s.length);
+      if (hardEnd >= s.length) {
+        chunks.add(s.substring(start).trim());
+        break;
+      }
+      final slice = s.substring(start, hardEnd);
+      var relBreak = slice.lastIndexOf(RegExp(r'[ ,;:，、]'));
+      if (relBreak < slice.length ~/ 5) {
+        relBreak = hardEnd - start - 1;
+      }
+      final cut = start + relBreak + 1;
+      chunks.add(s.substring(start, cut).trim());
+      start = cut;
+    }
+    return chunks.where((c) => c.isNotEmpty).toList();
   }
 }

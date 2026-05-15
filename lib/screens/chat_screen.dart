@@ -1,15 +1,27 @@
-import 'package:flutter/material.dart';
-import 'package:speech_to_text/speech_to_text.dart' as stt;
+import 'dart:async';
+
 import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
+import 'package:flutter/services.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:speech_to_text/speech_to_text.dart' as stt;
 
 import '../services/chat_service.dart';
+
+bool get _isAndroid =>
+    !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
 const Color _primaryColor = Color(0xFF2563EB);
 const Color _accentColor = Color(0xFF10B981);
 const Color _surfaceColor = Color(0xFFF8FAFC);
 const Color _cardColor = Color(0xFFFFFFFF);
 const Color _textPrimary = Color(0xFF1E293B);
-const Color _textSecondary = Color(0xFF64748B);
+
+void _micLog(String message) {
+  debugPrint('[MIC] $message');
+}
 
 class ChatScreen extends StatefulWidget {
   final String? roomName;
@@ -30,6 +42,16 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _isListening = false;
   bool _isLoading = false;
   bool _isPlaying = false;
+  /// Mic tự bật lại sau mỗi lượt (trừ khi người dùng bấm Dừng).
+  bool _userPausedContinuousMic = false;
+  /// Tránh gọi listen() chồng lấn (double-tap / resume đồng thời).
+  bool _micSessionActive = false;
+  /// Đã chạy initialize ít nhất một lần (gợi ý giao diện / hỗ trợ truy cập).
+  bool _speechInitAttempted = false;
+  /// true chỉ khi initialize thành công và engine báo isAvailable.
+  bool _speechEngineReady = false;
+  /// Đã hiện hướng dẫn dài lần đầu khi lỗi recognizerNotAvailable.
+  bool _printedRecognizerHelp = false;
   String? _lastAIResponse;
 
   @override
@@ -37,7 +59,7 @@ class _ChatScreenState extends State<ChatScreen> {
     super.initState();
     _speechToText = stt.SpeechToText();
     _audioPlayer = AudioPlayer();
-    _initializeSpeech();
+    _prepareChatMedia();
     
     // Add welcome message
     _messages.add(
@@ -51,137 +73,401 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
-    _speechToText.stop();
+    _micLog('dispose — tắt STT');
+    try {
+      _speechToText.stop();
+    } catch (_) {}
     _audioPlayer.dispose();
     _messageController.dispose();
     super.dispose();
   }
 
-  void _initializeSpeech() async {
-    await _speechToText.initialize(
-      onError: (error) {
-        debugPrint('Lỗi STT: $error');
-        _showSnackBar('Lỗi: $error');
-      },
-      onStatus: (status) {
-        debugPrint('Status: $status');
-      },
-    );
+  /// Android: audio focus + loa ngoài; web/iOS giữ mặc định.
+  Future<void> _configureAudioForAndroid() async {
+    if (!_isAndroid) return;
+    try {
+      await _audioPlayer.setAudioContext(
+        const AudioContext(
+          android: AudioContextAndroid(
+            isSpeakerphoneOn: true,
+            stayAwake: true,
+            contentType: AndroidContentType.speech,
+            usageType: AndroidUsageType.media,
+            audioFocus: AndroidAudioFocus.gain,
+          ),
+        ),
+      );
+    } catch (e) {
+      debugPrint('Audio context Android: $e');
+    }
   }
 
-  void _startListening() async {
-    if (!_isListening && _speechToText.isAvailable) {
-      setState(() => _isListening = true);
-      
-      try {
-        await _speechToText.listen(
-          onResult: (result) {
-            setState(() {
-              _messageController.text = result.recognizedWords;
-            });
-            
-            if (result.finalResult) {
-              setState(() => _isListening = false);
-              // Auto send khi hết nói
-              if (result.recognizedWords.isNotEmpty) {
-                _sendMessage(result.recognizedWords);
-              }
-            }
-          },
-          localeId: 'vi_VN',
+  Future<void> _prepareChatMedia() async {
+    await _configureAudioForAndroid();
+    await _initializeSpeech();
+    if (mounted &&
+        _speechEngineReady &&
+        !_userPausedContinuousMic) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _resumeContinuousMicAfterIdle('mở_màn_chat');
+      });
+    }
+  }
+
+  void _resumeContinuousMicAfterIdle(String reason) {
+    if (!_speechEngineReady) {
+      _micLog('Không resume ($reason): không có engine nhận dạng giọng trên máy');
+      return;
+    }
+    Future<void>(() async {
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      if (!mounted || _userPausedContinuousMic) {
+        _micLog('Không resume ($reason): userPaused=$_userPausedContinuousMic');
+        return;
+      }
+      await _startListening();
+    });
+  }
+
+  void _announceForAccessibility(String message) {
+    final dir = Directionality.maybeOf(context) ?? TextDirection.ltr;
+    // ignore: deprecated_member_use
+    SemanticsService.announce(message, dir);
+    _micLog('A11y announce: $message');
+  }
+
+  void _showSpeechUnavailableHelp() {
+    const full =
+        'Thiết bị chưa có dịch vụ nhận dạng giọng của Google. '
+        'Hãy cài hoặc cập nhật ứng dụng Google từ CH Play, mở app Google một lần. '
+        'Vào Cài đặt hệ thống, tìm Ngôn ngữ hoặc Ý đầu vào bằng giọng nói, chọn dịch vụ Google.';
+
+    const short =
+        'Nhận dạng giọng vẫn chưa sẵn sàng. Kiểm tra ứng dụng Google và cài đặt giọng nói của Google.';
+
+    if (!_printedRecognizerHelp) {
+      _printedRecognizerHelp = true;
+      _showSnackBar(full, duration: const Duration(seconds: 20));
+      _announceForAccessibility(full);
+    } else {
+      _showSnackBar(short, duration: const Duration(seconds: 10));
+      _announceForAccessibility(short);
+    }
+  }
+
+  Future<bool> _initializeSpeech() async {
+    try {
+      final ok = await _speechToText.initialize(
+        onError: (error) {
+          _micLog('STT lỗi: $error');
+          if (mounted) {
+            _showSnackBar('Lỗi nhận dạng giọng: $error');
+          }
+        },
+        onStatus: (status) {
+          switch (status) {
+            case 'listening':
+              _micLog('STT đang CHẠY — đang nghe microphone');
+              if (mounted) setState(() => _isListening = true);
+              break;
+            case 'notListening':
+              _micLog('STT dừng — notListening');
+              if (mounted) setState(() => _isListening = false);
+              break;
+            default:
+              _micLog('STT status=$status');
+          }
+        },
+      );
+      if (!mounted) return false;
+      final ready = ok && _speechToText.isAvailable;
+      _speechEngineReady = ready;
+      if (!ready) {
+        _micLog(
+          'STT không khả dụng (initialize=$ok, isAvailable=${_speechToText.isAvailable})',
         );
-      } catch (e) {
-        debugPrint('Lỗi: $e');
-        setState(() => _isListening = false);
+      } else {
+        _micLog('STT sẵn sàng — mic có thể luôn bật cho người dùng');
+      }
+      return ready;
+    } on PlatformException catch (e) {
+      _speechEngineReady = false;
+      _micLog(
+        'initialize PlatformException: code=${e.code} message=${e.message}',
+      );
+      if (e.code == 'recognizerNotAvailable') {
+        if (mounted) _showSpeechUnavailableHelp();
+      } else if (mounted) {
+        _showSnackBar(
+          'Không khởi tạo được nhận dạng giọng: ${e.message}',
+        );
+      }
+      return false;
+    } catch (e, st) {
+      _speechEngineReady = false;
+      _micLog('initialize lỗi: $e\n$st');
+      if (mounted) {
+        _showSnackBar('Lỗi khởi tạo mic: $e');
+      }
+      return false;
+    } finally {
+      if (mounted) {
+        setState(() => _speechInitAttempted = true);
       }
     }
   }
 
-  void _stopListening() async {
-    if (_isListening) {
+  Future<bool> _ensureAndroidMicPermission() async {
+    if (!_isAndroid) return true;
+    var status = await Permission.microphone.status;
+    if (!status.isGranted) {
+      status = await Permission.microphone.request();
+    }
+    if (status.isGranted) return true;
+    if (mounted) {
+      final msg = status.isPermanentlyDenied
+          ? 'Micro bị từ chối. Vào Cài đặt → Ứng dụng → AI SP → Quyền → Bật Micro.'
+          : 'Cần quyền micro để nói.';
+      _showSnackBar(msg);
+    }
+    return false;
+  }
+
+  /// Ưu tiên tiếng Việt; nếu máy không có gói vi_VN thì fallback locale hệ thống (bàn phím vẫn
+  /// nhận diện được vì IME dùng pipeline khác).
+  Future<String?> _preferredSpeechLocaleId() async {
+    try {
+      final locales = await _speechToText.locales();
+      final ids = locales.map((l) => l.localeId).toList();
+      _micLog(
+        'locales (${ids.length}): ${ids.take(15).join(", ")}${ids.length > 15 ? "…" : ""}',
+      );
+
+      const preferred = ['vi_VN', 'vi-VN', 'vi'];
+      for (final p in preferred) {
+        if (ids.contains(p)) return p;
+      }
+      for (final l in locales) {
+        if (l.localeId.toLowerCase().startsWith('vi')) {
+          return l.localeId;
+        }
+      }
+      if (locales.isNotEmpty) {
+        final fallback = locales.first.localeId;
+        _micLog('Không thấy tiếng Việt trong danh sách STT — dùng $fallback');
+        return fallback;
+      }
+    } catch (e) {
+      _micLog('locales() lỗi: $e');
+    }
+    return null;
+  }
+
+  Future<void> _stopMicEngineOnly() async {
+    if (_speechToText.isListening) {
       await _speechToText.stop();
+      _micLog('Đã gọi speech.stop() (tạm tắt, không đổi chế độ người dùng)');
+    }
+    if (mounted && _isListening) {
       setState(() => _isListening = false);
+    }
+  }
+
+  Future<void> _userStopContinuousMic() async {
+    _userPausedContinuousMic = true;
+    _micLog('Người dùng TẮT mic liên tục — không tự nghe lại cho đến khi bấm icon mic');
+    await _stopMicEngineOnly();
+  }
+
+  Future<void> _startListening({bool triggeredByMicButton = false}) async {
+    if (triggeredByMicButton) {
+      _userPausedContinuousMic = false;
+      _micLog('Bật lại mic (người dùng bấm icon mic)');
+    }
+
+    if (_isLoading || _isPlaying) {
+      _micLog(
+        'startListening bỏ qua: loading=$_isLoading playing=$_isPlaying',
+      );
+      return;
+    }
+
+    if (_micSessionActive) {
+      _micLog('startListening bỏ qua: đang có phiên listen đang chạy');
+      return;
+    }
+
+    // Hết kẹt: UI đỏ nhưng engine không listen (rất hay gặp sau lỗi/race).
+    if (_isListening && !_speechToText.isListening) {
+      _micLog('Phục hồi: UI báo đang nghe nhưng engine không active');
+      if (mounted) setState(() => _isListening = false);
+    }
+
+    if (_speechToText.isListening) {
+      _micLog('Engine đã đang listen — không gọi listen() lần nữa');
+      return;
+    }
+
+    if (!await _ensureAndroidMicPermission()) return;
+
+    if (!_speechToText.isAvailable) {
+      await _initializeSpeech();
+    }
+    if (!_speechToText.isAvailable) {
+      if (mounted) {
+        _showSnackBar(
+          'Nhận dạng giọng không khả dụng. Cài Google / dịch vụ Google Play, hoặc bật "Nhận dạng giọng nói của Google" trong Cài đặt.',
+        );
+      }
+      return;
+    }
+
+    final localeId = await _preferredSpeechLocaleId();
+    _micLog(
+      'Gọi listen() localeId=${localeId ?? "mặc định hệ thống"} — chờ status=listening',
+    );
+
+    _micSessionActive = true;
+    try {
+      await _speechToText.listen(
+        onResult: (result) {
+          setState(() {
+            _messageController.text = result.recognizedWords;
+          });
+
+          if (result.finalResult) {
+            _micLog('Có kết quả cuối (${result.recognizedWords.length} ký tự)');
+            if (result.recognizedWords.isNotEmpty) {
+              _sendMessage(result.recognizedWords);
+            } else {
+              _micLog('Kết quả rỗng — không gửi');
+              if (!_userPausedContinuousMic && mounted) {
+                _resumeContinuousMicAfterIdle('final_rỗng');
+              }
+            }
+          }
+        },
+        localeId: localeId,
+        pauseFor: const Duration(seconds: 3),
+        listenFor: const Duration(seconds: 60),
+        listenOptions: stt.SpeechListenOptions(
+          cancelOnError: true,
+          partialResults: true,
+          listenMode: stt.ListenMode.dictation,
+        ),
+      );
+    } catch (e) {
+      _micLog('Lỗi listen: $e');
+      if (mounted) {
+        setState(() => _isListening = false);
+        _showSnackBar('Không bắt đầu được micro: $e');
+      }
+    } finally {
+      _micSessionActive = false;
+      if (mounted &&
+          _speechEngineReady &&
+          !_speechToText.isListening &&
+          !_userPausedContinuousMic &&
+          !_isLoading &&
+          !_isPlaying) {
+        _resumeContinuousMicAfterIdle('sau_kết_thúc_phiên_listen');
+      }
     }
   }
 
   void _sendMessage(String text) async {
     if (text.trim().isEmpty) return;
 
-    // Add user message
     setState(() {
       _messages.add(ChatMessage(role: 'user', content: text));
       _messageController.clear();
       _isLoading = true;
     });
+    _micLog('Gửi tin nhắn — loading=true trước khi tắt mic (tránh resume sớm)');
 
-    // Get AI response
-    final response = await ChatService.sendMessage(text);
-    
-    setState(() {
-      _messages.add(ChatMessage(role: 'assistant', content: response));
-      _isLoading = false;
-    });
+    await _stopMicEngineOnly();
+    _micLog('Mic đã tắt — chờ AI + TTS');
 
-    // Lưu response để phát lại sau
-    _lastAIResponse = response;
-    
-    // Auto play TTS
-    await _playTTS(response);
+    try {
+      final response = await ChatService.sendMessage(text);
+
+      if (!mounted) return;
+      setState(() {
+        _messages.add(ChatMessage(role: 'assistant', content: response));
+        _isLoading = false;
+      });
+
+      _lastAIResponse = response;
+      await _playTTS(response);
+    } finally {
+      if (mounted && _speechEngineReady && !_userPausedContinuousMic) {
+        _micLog('Kết thúc vòng hỏi–đáp — sẽ bật lại mic liên tục');
+        _resumeContinuousMicAfterIdle('sau_TTS');
+      }
+    }
   }
 
   Future<void> _playTTS(String text) async {
+    await _stopMicEngineOnly();
+
     try {
       setState(() => _isPlaying = true);
-      
-      // Tách text thành các câu (cách bằng dấu chấm)
+      _micLog('TTS bắt đầu (mic tắt để tránh thu tiếng loa)');
+
       final sentences = ChatService.splitTextForTTS(text);
-      debugPrint('🔊 Phát ${sentences.length} câu');
-      
-      // Phát từng câu liên tiếp
-      for (int i = 0; i < sentences.length; i++) {
+      final n = sentences.length;
+      _micLog('TTS: $n đoạn (tối đa ${ChatService.ttsMaxChunkChars} ký tự/đoạn)');
+
+      for (var i = 0; i < n; i++) {
         final sentence = sentences[i];
         final audioUrl = ChatService.getTTSUrlForText(sentence);
-        
-        debugPrint('🔊 Phát câu ${i + 1}/${sentences.length}: "$sentence"');
-        
+        _micLog(
+          'TTS đoạn ${i + 1}/$n (${sentence.length} ký tự): ${sentence.length > 80 ? '${sentence.substring(0, 80)}…' : sentence}',
+        );
+
+        final completer = Completer<void>();
+        late final StreamSubscription<void> sub;
+        sub = _audioPlayer.onPlayerComplete.listen((_) {
+          if (!completer.isCompleted) completer.complete();
+        });
+
         try {
-          // Phát audio
+          await _audioPlayer.stop();
           await _audioPlayer.play(UrlSource(audioUrl));
-          
-          // Đợi audio phát xong (tính theo độ dài của câu)
-          // Ước tính: 100ms cơ bản + 50ms per ký tự
-          final delayMs = 500 + (sentence.length * 50);
-          await Future.delayed(Duration(milliseconds: delayMs));
+          final cap = Duration(
+            seconds: (4 + sentence.length / 14).ceil().clamp(6, 90),
+          );
+          await completer.future.timeout(cap);
+        } on TimeoutException {
+          _micLog('TTS đoạn ${i + 1}/$n — hết thời gian chờ, chuyển đoạn sau');
         } catch (e) {
-          debugPrint('❌ Lỗi phát câu $i: $e');
+          _micLog('TTS đoạn ${i + 1}/$n lỗi: $e');
           if (mounted) {
-            _showSnackBar('Lỗi phát câu ${i + 1}');
+            _showSnackBar('Lỗi phát đoạn ${i + 1}');
           }
+        } finally {
+          await sub.cancel();
         }
       }
-      
+
       if (mounted) {
-        setState(() {
-          _isPlaying = false;
-          // Xóa text cũ sau khi phát xong
-          _lastAIResponse = null;
-        });
+        setState(() => _isPlaying = false);
+        _lastAIResponse = text;
       }
+      _micLog('TTS xong');
     } catch (e) {
-      debugPrint('Lỗi TTS: $e');
+      _micLog('TTS lỗi tổng: $e');
       if (mounted) {
-        setState(() {
-          _isPlaying = false;
-          _lastAIResponse = null;
-        });
+        setState(() => _isPlaying = false);
+        _lastAIResponse = text;
         _showSnackBar('Lỗi phát âm thanh: $e');
       }
     }
   }
 
-  void _showSnackBar(String message) {
+  void _showSnackBar(String message, {Duration duration = const Duration(seconds: 5)}) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
+      SnackBar(content: Text(message), duration: duration),
     );
   }
 
@@ -261,12 +547,21 @@ class _ChatScreenState extends State<ChatScreen> {
                                       _isPlaying ? 'Tạm dừng' : 'Phát lại',
                                       style: const TextStyle(fontSize: 12),
                                     ),
-                                    onPressed: () {
+                                    onPressed: () async {
                                       if (_isPlaying) {
-                                        _audioPlayer.pause();
-                                        setState(() => _isPlaying = false);
+                                        await _audioPlayer.pause();
+                                        if (mounted) {
+                                          setState(() => _isPlaying = false);
+                                        }
                                       } else {
-                                        _playTTS(_lastAIResponse!);
+                                        await _playTTS(_lastAIResponse!);
+                                        if (mounted &&
+                                            _speechEngineReady &&
+                                            !_userPausedContinuousMic) {
+                                          _resumeContinuousMicAfterIdle(
+                                            'phát_lại_TTS',
+                                          );
+                                        }
                                       }
                                     },
                                     style: ElevatedButton.styleFrom(
@@ -310,7 +605,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         ),
                         const Spacer(),
                         GestureDetector(
-                          onTap: _stopListening,
+                          onTap: _userStopContinuousMic,
                           child: Container(
                             padding: const EdgeInsets.symmetric(
                               horizontal: 12,
@@ -340,7 +635,11 @@ class _ChatScreenState extends State<ChatScreen> {
                         controller: _messageController,
                         enabled: !_isLoading,
                         decoration: InputDecoration(
-                          hintText: 'Nhập hoặc nói...',
+                          hintText: !_speechEngineReady && _speechInitAttempted
+                              ? 'Nhập chữ. Mic cần Google / Dịch vụ nhận dạng giọng — bấm nút mic để nghe hướng dẫn.'
+                              : _userPausedContinuousMic
+                                  ? 'Nhập hoặc bấm mic để nghe...'
+                                  : 'Nhập hoặc đang nghe liên tục...',
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(8),
                             borderSide: const BorderSide(
@@ -377,21 +676,38 @@ class _ChatScreenState extends State<ChatScreen> {
                       ),
                     ),
                     const SizedBox(width: 12),
-                    // Mic button
-                    Container(
-                      decoration: BoxDecoration(
-                        color: _isListening ? Colors.red : _primaryColor,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: IconButton(
-                        icon: Icon(
-                          _isListening ? Icons.stop : Icons.mic,
-                          color: Colors.white,
+                    // Mic button (Semantics cho TalkBack / người khiếm thị)
+                    Semantics(
+                      button: true,
+                      enabled: !_isLoading,
+                      label: _speechEngineReady
+                          ? (_isListening
+                              ? 'Đang nghe microphone. Nhấn để tắt mic.'
+                              : 'Bật microphone để nói liên tục.')
+                          : 'Nhận dạng giọng chưa bật trên máy. Nhấn để thử lại và nghe hướng dẫn cài Google.',
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: _isListening ? Colors.red : _primaryColor,
+                          borderRadius: BorderRadius.circular(8),
                         ),
-                        onPressed: _isLoading
-                            ? null
-                            : (_isListening ? _stopListening : _startListening),
-                        tooltip: _isListening ? 'Dừng' : 'Nói',
+                        child: IconButton(
+                          icon: Icon(
+                            _isListening ? Icons.stop : Icons.mic,
+                            color: Colors.white,
+                          ),
+                          onPressed: _isLoading
+                              ? null
+                              : (_isListening
+                                  ? _userStopContinuousMic
+                                  : () => _startListening(
+                                        triggeredByMicButton: true,
+                                      )),
+                          tooltip: _isListening
+                              ? 'Dừng mic'
+                              : (_speechEngineReady
+                                  ? 'Bật mic (nghe liên tục)'
+                                  : 'Mic — thử lại / xem hướng dẫn'),
+                        ),
                       ),
                     ),
                     const SizedBox(width: 8),
