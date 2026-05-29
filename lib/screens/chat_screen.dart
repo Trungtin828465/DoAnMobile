@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:io';
+import 'dart:math';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/foundation.dart';
@@ -8,7 +10,14 @@ import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 
+import '../models/layout_model.dart';
+import '../models/navigation_model.dart';
 import '../services/chat_service.dart';
+import '../services/detection_service.dart';
+import '../services/layout_storage_service.dart';
+import '../services/navigation_service.dart';
+import 'camera_screen.dart';
+import 'navigation_guide_screen.dart';
 
 bool get _isAndroid =>
     !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
@@ -42,6 +51,17 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _isListening = false;
   bool _isLoading = false;
   bool _isPlaying = false;
+  bool _isDetecting = false;
+  bool _showDetectionResult = false;
+  
+  List<Detection> _detectedObjects = [];
+  File? _detectedImageFile;  // ← Lưu ảnh vừa detect
+  final DetectionService _detectionService = DetectionService();
+  
+  // Navigation variables
+  List<LayoutObject>? _roomLayoutObjects;
+  String? _navigationTargetName;  // ← Target object name user nhập
+  
   /// Mic tự bật lại sau mỗi lượt (trừ khi người dùng bấm Dừng).
   bool _userPausedContinuousMic = false;
   /// Tránh gọi listen() chồng lấn (double-tap / resume đồng thời).
@@ -60,6 +80,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _speechToText = stt.SpeechToText();
     _audioPlayer = AudioPlayer();
     _prepareChatMedia();
+    _loadRoomLayout();  // ← Load layout ngay lúc khởi tạo
     
     // Add welcome message
     _messages.add(
@@ -407,6 +428,632 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  Future<void> _openCamera() async {
+    try {
+      // Hiển thị dialog nhập target object trước khi chụp ảnh
+      final targetName = await _showNavigationTargetDialog();
+      if (targetName == null) return;  // User cancel
+      
+      final status = await Permission.camera.request();
+      if (!status.isGranted) {
+        if (mounted) {
+          _showSnackBar('Cần quyền truy cập camera');
+        }
+        return;
+      }
+
+      if (!mounted) return;
+      final result = await Navigator.push<File>(
+        context,
+        MaterialPageRoute(builder: (_) => const CameraScreen()),
+      );
+
+      if (result != null && mounted) {
+        setState(() {
+          _showDetectionResult = true;
+          _navigationTargetName = targetName;  // ← Lưu target name
+        });
+        await _detectFurniture(result);
+      }
+    } catch (e) {
+      if (mounted) {
+        _showSnackBar('Lỗi: $e');
+      }
+    }
+  }
+
+  /// Hiển thị dialog nhập tên vật cần điều hướng
+  Future<String?> _showNavigationTargetDialog() {
+    final textController = TextEditingController();
+    
+    return showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Tìm vật nào?'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Nhập tên vật muốn đi tới (ví dụ: bed, sofa, table, ...)',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: textController,
+              decoration: InputDecoration(
+                hintText: 'Nhập tên vật...',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              autofocus: true,
+            ),
+            const SizedBox(height: 12),
+            if (_roomLayoutObjects != null && _roomLayoutObjects!.isNotEmpty)
+              Wrap(
+                spacing: 6,
+                children: _roomLayoutObjects!
+                    .map((obj) => ActionChip(
+                          label: Text(obj.className),
+                          onPressed: () {
+                            textController.text = obj.className;
+                          },
+                        ))
+                    .toList(),
+              ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Hủy'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final name = textController.text.trim();
+              if (name.isEmpty) {
+                _showSnackBar('Vui lòng nhập tên vật');
+              } else {
+                Navigator.pop(context, name);
+              }
+            },
+            child: const Text('Tiếp tục'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _detectFurniture(File imageFile) async {
+    if (_isDetecting) return;
+
+    setState(() => _isDetecting = true);
+
+    try {
+      final result = await _detectionService.detectFromImage(imageFile);
+
+      if (!mounted) return;
+
+      setState(() {
+        _detectedObjects = result.detections;
+        _detectedImageFile = imageFile;  // ← Lưu lại ảnh
+        _isDetecting = false;
+      });
+
+      if (result.success && result.detections.isNotEmpty) {
+        _showSnackBar(
+          'Phát hiện ${result.detections.length} vật: ${result.detections.map((d) => d.className).join(", ")}',
+        );
+        
+        // ← TỰ ĐỘNG ĐIỀU HƯỚNG NẾU USER ĐÃ NHẬP TARGET
+        if (_navigationTargetName != null && _navigationTargetName!.isNotEmpty) {
+          await _startAutoNavigation(result.detections);
+        }
+      } else {
+        _showSnackBar('Không phát hiện vật nào hoặc độ tin cậy thấp');
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isDetecting = false);
+        _showSnackBar('Lỗi detection: $e');
+      }
+    }
+  }
+  
+  /// Tự động tính route và hiển thị điều hướng
+  Future<void> _startAutoNavigation(List<Detection> detections) async {
+    if (_roomLayoutObjects == null || _roomLayoutObjects!.isEmpty) {
+      _showSnackBar('Chưa load được layout phòng');
+      return;
+    }
+    
+    if (_navigationTargetName == null || _navigationTargetName!.isEmpty) {
+      _showSnackBar('Chưa chọn vật đích');
+      return;
+    }
+    
+    if (detections.isEmpty) {
+      _showSnackBar('Không phát hiện vật nào');
+      return;
+    }
+    
+    // Lấy vật có confidence cao nhất làm starting point
+    final highestConfidence = detections.reduce((a, b) => 
+      a.confidence > b.confidence ? a : b
+    );
+    
+    final navigationService = NavigationService();
+    
+    // Tìm starting object trong layout
+    final startObject = navigationService.findObjectByClassName(
+      _roomLayoutObjects!,
+      highestConfidence.className,
+    );
+    
+    if (startObject == null) {
+      _showSnackBar(
+        'Vật phát hiện "${highestConfidence.className}" không có trong layout'
+      );
+      return;
+    }
+    
+    // Tìm target object trong layout
+    final targetObject = navigationService.findObjectByClassName(
+      _roomLayoutObjects!,
+      _navigationTargetName!,
+    );
+    
+    if (targetObject == null) {
+      _showSnackBar(
+        'Vật "$_navigationTargetName" không có trong layout. Vui lòng chọn vật khác.'
+      );
+      return;
+    }
+    
+    // Tính route
+    try {
+      final route = await navigationService.calculateRoute(
+        startObject,
+        targetObject,
+        _roomLayoutObjects!,
+      );
+      
+      if (!mounted) return;
+      
+      // Navigation state management
+      
+      // Hiển thị NavigationGuideScreen
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => NavigationGuideScreen(
+            route: route,
+            onWaypointReached: (currentRoute, onVerified) {
+              _handleWaypointCapture(currentRoute, onVerified);
+            },
+            onNavigationComplete: _handleNavigationComplete,
+            onNavigationCanceled: _handleNavigationCanceled,
+          ),
+        ),
+      );
+    } catch (e) {
+      _showSnackBar('Lỗi tính toán route: $e');
+    } finally {
+      if (mounted) {
+        _navigationTargetName = null;  // Reset target
+      }
+    }
+  }
+
+  Widget _buildDetectionResultWidget() {
+    if (!_showDetectionResult || _detectedObjects.isEmpty || _detectedImageFile == null) {
+      return const SizedBox.shrink();
+    }
+
+    return Container(
+      margin: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF0F9FF),
+        border: Border.all(color: Colors.blue.shade300),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Phát hiện ${_detectedObjects.length} vật',
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14,
+                  color: Color(0xFF0369A1),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.close, size: 20),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+                onPressed: () {
+                  setState(() {
+                    _showDetectionResult = false;
+                    _detectedObjects = [];
+                    _detectedImageFile = null;
+                  });
+                },
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          
+          // Image with bounding boxes
+          ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: _buildDetectionImage(),
+          ),
+          const SizedBox(height: 12),
+          
+          // List of detected objects
+          ..._detectedObjects.map((obj) {
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Row(
+                children: [
+                  Container(
+                    width: 6,
+                    height: 6,
+                    decoration: BoxDecoration(
+                      color: Colors.blue.shade600,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      '${obj.className} (${(obj.confidence * 100).toStringAsFixed(1)}%)',
+                      style: const TextStyle(fontSize: 13),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+  
+  /// Hiển thị ảnh với bounding boxes
+  Widget _buildDetectionImage() {
+    if (_detectedImageFile == null) {
+      return const SizedBox.shrink();
+    }
+    
+    return FutureBuilder<Size>(
+      future: _getImageSize(_detectedImageFile!),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) {
+          return const SizedBox(
+            height: 200,
+            child: Center(child: CircularProgressIndicator()),
+          );
+        }
+        
+        final imageSize = snapshot.data!;
+        
+        return AspectRatio(
+          aspectRatio: imageSize.width / imageSize.height,
+          child: Stack(
+            children: [
+              // Ảnh
+              Image.file(
+                _detectedImageFile!,
+                fit: BoxFit.contain,
+              ),
+              // Bounding boxes
+              CustomPaint(
+                painter: BoundingBoxPainter(
+                  detections: _detectedObjects,
+                  imageSize: imageSize,
+                ),
+                size: Size.infinite,
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+  
+  /// Lấy kích thước ảnh
+  Future<Size> _getImageSize(File imageFile) async {
+    final image = Image.file(imageFile);
+    final completer = Completer<Size>();
+    
+    image.image.resolve(ImageConfiguration.empty).addListener(
+      ImageStreamListener((image, synchronousCall) {
+        final size = Size(
+          image.image.width.toDouble(),
+          image.image.height.toDouble(),
+        );
+        completer.complete(size);
+      }),
+    );
+    
+    return completer.future;
+  }
+
+  /// Load room layout từ storage
+  Future<void> _loadRoomLayout() async {
+    try {
+      final layoutStorageService = LayoutStorageService();
+      final layoutData = await layoutStorageService.loadLayout();
+      if (mounted) {
+        setState(() {
+          _roomLayoutObjects = layoutData.objects;
+        });
+      }
+      debugPrint('✓ Room layout loaded: ${layoutData.objects.length} objects');
+    } catch (e) {
+      debugPrint('❌ Lỗi load room layout: $e');
+    }
+  }
+
+  /// Bắt đầu navigation - hiện dialog chọn vật đích
+  // Future<void> _startNavigation() async {
+    // if (_roomLayoutObjects == null || _roomLayoutObjects!.isEmpty) {
+    //   if (mounted) {
+    //     _showSnackBar('Chưa load được layout phòng. Vui lòng tạo layout trước.');
+    //   }
+    //   return;
+    // }
+
+    // if (_detectedObjects.isEmpty) {
+    //   if (mounted) {
+    //     _showSnackBar('Không phát hiện vật nào để làm điểm bắt đầu');
+    //   }
+    //   return;
+    // }
+
+    // // Lấy vật có confidence cao nhất
+    // final highestConfidenceDetection =
+    //     _detectedObjects.reduce((a, b) => a.confidence > b.confidence ? a : b);
+
+    // // Tìm vật trong layout
+    // final navigationService = NavigationService();
+    // final startObject = navigationService.findObjectByClassName(
+    //   _roomLayoutObjects!,
+    //   highestConfidenceDetection.className,
+    // );
+
+    // if (startObject == null) {
+    //   if (mounted) {
+    //     _showSnackBar(
+    //       'Vật phát hiện "${highestConfidenceDetection.className}" không có trong layout phòng',
+    //     );
+    //   }
+    //   return;
+    // }
+
+    // // Hiển thị dialog chọn vật đích
+    // _showTargetSelectionDialog(startObject);
+  // }
+
+  /// Hiển thị dialog để user chọn vật đích
+  /// Dialog để chọn vật đích (unused - keep for reference when _startNavigation is needed)
+  // void _showTargetSelectionDialog(LayoutObject startObject) {
+  //   if (_roomLayoutObjects == null) return;
+
+  //   // Danh sách vật khác nhau trong layout
+  //   final uniqueObjects = <String, LayoutObject>{};
+  //   for (var obj in _roomLayoutObjects!) {
+  //     if (obj.className.toLowerCase() !=
+  //         startObject.className.toLowerCase()) {
+  //       uniqueObjects[obj.className] = obj;
+  //     }
+  //   }
+
+  //   if (uniqueObjects.isEmpty) {
+  //     if (mounted) {
+  //       _showSnackBar('Không có vật nào khác để điều hướng');
+  //     }
+  //     return;
+  //   }
+
+  //   showDialog(
+  //     context: context,
+  //     builder: (context) => AlertDialog(
+  //       title: const Text('Chọn vật đích'),
+  //       content: SingleChildScrollView(
+  //         child: Column(
+  //           mainAxisSize: MainAxisSize.min,
+  //           children: [
+  //             Text(
+  //               'Bắt đầu từ: ${startObject.className}',
+  //               style: const TextStyle(
+  //                 fontWeight: FontWeight.bold,
+  //                 color: Color(0xFF0369A1),
+  //               ),
+  //             ),
+  //             const SizedBox(height: 16),
+  //             const Text('Bạn muốn đến:'),
+  //             const SizedBox(height: 8),
+  //             ...uniqueObjects.entries.map((entry) {
+  //               return Padding(
+  //                 padding: const EdgeInsets.only(bottom: 8),
+  //                 child: ElevatedButton(
+  //                   onPressed: () {
+  //                     Navigator.pop(context);
+  //                     _calculateAndStartNavigation(startObject, entry.value);
+  //                   },
+  //                   style: ElevatedButton.styleFrom(
+  //                     backgroundColor: const Color(0xFF2563EB),
+  //                     minimumSize: const Size(double.infinity, 40),
+  //                   ),
+  //                   child: Text(entry.key),
+  //                 ),
+  //               );
+  //             }),
+  //           ],
+  //         ),
+  //       ),
+  //     ),
+  //   );
+  // }
+
+  /// Tính toán route và bắt đầu navigation
+  Future<void> _calculateAndStartNavigation(
+    LayoutObject startObject,
+    LayoutObject endObject,
+  ) async {
+    if (_roomLayoutObjects == null) return;
+
+    try {
+      final navigationService = NavigationService();
+      final route = await navigationService.calculateRoute(
+        startObject,
+        endObject,
+        _roomLayoutObjects!,
+      );
+
+      if (!mounted) return;
+
+      // Mở Navigation Guide Screen
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => NavigationGuideScreen(
+            route: route,
+            onWaypointReached: (currentRoute, onVerified) {
+              _handleWaypointCapture(currentRoute, onVerified);
+            },
+            onNavigationComplete: _handleNavigationComplete,
+            onNavigationCanceled: _handleNavigationCanceled,
+          ),
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        _showSnackBar('Lỗi tính toán lộ trình: $e');
+      }
+    }
+  }
+
+  /// Xử lý khi user bấm "Chụp ảnh" ở chặn đường
+  Future<void> _handleWaypointCapture(
+    NavigationRoute currentRoute,
+    Function(bool verified) onVerified,
+  ) async {
+    try {
+      // Yêu cầu permission camera
+      final status = await Permission.camera.request();
+      if (!status.isGranted) {
+        if (mounted) {
+          _showSnackBar('Cần quyền truy cập camera');
+        }
+        onVerified(false);
+        return;
+      }
+
+      if (!mounted) return;
+
+      // Mở camera
+      final result = await Navigator.push<File>(
+        context,
+        MaterialPageRoute(builder: (_) => const CameraScreen()),
+      );
+
+      if (result != null && mounted) {
+        // Chụp ảnh được, giờ detect
+        await _detectAndVerifyWaypoint(result, currentRoute, onVerified);
+      } else {
+        onVerified(false);
+      }
+    } catch (e) {
+      if (mounted) {
+        _showSnackBar('Lỗi: $e');
+      }
+      onVerified(false);
+    }
+  }
+
+  /// Detect ảnh tại chặn đường và kiểm tra xem đã tới chưa
+  Future<void> _detectAndVerifyWaypoint(
+    File imageFile,
+    NavigationRoute currentRoute,
+    Function(bool verified) onVerified,
+  ) async {
+    try {
+      setState(() => _isDetecting = true);
+
+      final result = await _detectionService.detectFromImage(imageFile);
+
+      if (!mounted) return;
+
+      final currentWaypoint = currentRoute.getCurrentWaypoint();
+      if (currentWaypoint == null) {
+        setState(() => _isDetecting = false);
+        onVerified(false);
+        return;
+      }
+
+      // Lấy danh sách tên vật từ detection result
+      final detectedNames =
+          result.detections.map((d) => d.className).toList();
+
+      // Kiểm tra xem đã tới waypoint chưa
+      final navigationService = NavigationService();
+      final verified = navigationService.verifyWaypoint(
+        currentWaypoint,
+        detectedNames,
+        0,  // currentUserX - tạm để 0, sau này có thể cải thiện
+        0,  // currentUserZ
+      );
+
+      setState(() => _isDetecting = false);
+
+      // Gọi callback để NavigationGuideScreen update
+      onVerified(verified);
+
+      if (verified) {
+        // ✓ Đã tới chặn này
+        if (mounted) {
+          _showSnackBar('✓ Đã xác nhận: ${detectedNames.join(", ")}');
+        }
+      } else {
+        if (mounted) {
+          _showSnackBar(
+            '✗ Phát hiện: ${detectedNames.isEmpty ? "không có gì" : detectedNames.join(", ")}',
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isDetecting = false);
+        _showSnackBar('Lỗi detection: $e');
+      }
+      onVerified(false);
+    }
+  }
+
+  /// Xử lý khi navigation hoàn thành
+  void _handleNavigationComplete() {
+    if (mounted) {
+      _showSnackBar('🎉 Bạn đã tới đích!');
+    }
+  }
+
+  /// Xử lý khi user hủy navigation
+  void _handleNavigationCanceled() {
+    if (mounted) {
+      _showSnackBar('Đã hủy hướng dẫn');
+    }
+  }
+
   Future<void> _playTTS(String text) async {
     await _stopMicEngineOnly();
 
@@ -581,6 +1228,9 @@ class _ChatScreenState extends State<ChatScreen> {
                   ),
           ),
 
+          // Detection Result Widget
+          if (_showDetectionResult) _buildDetectionResultWidget(),
+
           // Input area
           Container(
             padding: const EdgeInsets.all(16),
@@ -711,6 +1361,19 @@ class _ChatScreenState extends State<ChatScreen> {
                       ),
                     ),
                     const SizedBox(width: 8),
+                    // Camera button for detection
+                    Container(
+                      decoration: BoxDecoration(
+                        color: Colors.orange,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: IconButton(
+                        icon: const Icon(Icons.camera_alt, color: Colors.white),
+                        onPressed: _isLoading || _isDetecting ? null : _openCamera,
+                        tooltip: 'Chụp ảnh để phát hiện nội thất',
+                      ),
+                    ),
+                    const SizedBox(width: 8),
                     // Send button
                     Container(
                       decoration: BoxDecoration(
@@ -747,3 +1410,101 @@ class ChatMessage {
     this.isError = false,
   });
 }
+
+/// Custom painter để vẽ bounding boxes trên ảnh
+class BoundingBoxPainter extends CustomPainter {
+  final List<Detection> detections;
+  final Size imageSize;
+
+  BoundingBoxPainter({
+    required this.detections,
+    required this.imageSize,
+  });
+
+  @override
+  void paint(Canvas canvas, Size canvasSize) {
+    // Tính tỷ lệ scale từ kích thước ảnh sang kích thước canvas
+    final scaleX = canvasSize.width / imageSize.width;
+    final scaleY = canvasSize.height / imageSize.height;
+
+    // Vẽ bounding boxes
+    for (final detection in detections) {
+      // Scale tọa độ
+      final left = detection.x * scaleX;
+      final top = detection.y * scaleY;
+      final width = detection.width * scaleX;
+      final height = detection.height * scaleY;
+
+      final rect = Rect.fromLTWH(left, top, width, height);
+
+      // Vẽ box
+      canvas.drawRect(
+        rect,
+        Paint()
+          ..color = _getColorForClass(detection.className)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 3,
+      );
+
+      // Vẽ label background
+      final textPainter = TextPainter(
+        text: TextSpan(
+          text:
+              '${detection.className} ${(detection.confidence * 100).toStringAsFixed(0)}%',
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 13,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      );
+      textPainter.layout();
+
+      // Background box cho label
+      final labelBg = Rect.fromLTWH(
+        rect.left,
+        max(0, rect.top - textPainter.height - 6),
+        textPainter.width + 8,
+        textPainter.height + 4,
+      );
+      
+      canvas.drawRect(
+        labelBg,
+        Paint()
+          ..color = _getColorForClass(detection.className)
+          ..style = PaintingStyle.fill,
+      );
+
+      // Vẽ text label
+      textPainter.paint(
+        canvas,
+        Offset(rect.left + 4, max(0, rect.top - textPainter.height - 4)),
+      );
+    }
+  }
+
+  Color _getColorForClass(String className) {
+    final colors = {
+      'bed': const Color(0xFFFF6B6B),
+      'sofa': const Color(0xFF4ECDC4),
+      'chair': const Color(0xFF45B7D1),
+      'table': const Color(0xFFF7DC6F),
+      'lamp': const Color(0xFFBB8FCE),
+      'tv': const Color(0xFF85C1E2),
+      'laptop': const Color(0xFF52B788),
+      'wardrobe': const Color(0xFFD4A574),
+      'window': const Color(0xFF9FE2BF),
+      'door': const Color(0xFFB19CD9),
+      'potted plant': const Color(0xFF96CEB4),
+      'photo frame': const Color(0xFFFFB6C1),
+    };
+    return colors[className.toLowerCase()] ?? const Color(0xFF5E5CE6);
+  }
+
+  @override
+  bool shouldRepaint(BoundingBoxPainter oldDelegate) {
+    return oldDelegate.detections.length != detections.length;
+  }
+}
+
