@@ -6,7 +6,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../services/session_storage.dart';
 import '../services/room_service.dart';
 
 enum RoomDesignerStep { size, design }
@@ -100,15 +99,12 @@ class PlacedItem {
 }
 
 class RoomDesignerController extends ChangeNotifier {
-  RoomDesignerController({SessionStorage? sessionStorage})
-      : _sessionStorage = sessionStorage ?? createSessionStorage();
+  RoomDesignerController();
 
   static const String sessionKey = 'room_layout_2d';
   static const double metersPerCell = 0.5;
   static const double minRoomMeters = 2.0;
   static const double maxRoomMeters = 20.0;
-
-  final SessionStorage _sessionStorage;
 
   RoomDesignerStep _step = RoomDesignerStep.size;
   int _roomWidth = 8;
@@ -256,26 +252,7 @@ class RoomDesignerController extends ChangeNotifier {
     try {
       _errorMessage = null;
       await _preloadImages();
-      final raw = _sessionStorage.read(sessionKey);
-      if (raw != null && raw.isNotEmpty) {
-        final decoded = jsonDecode(raw) as Map<String, dynamic>;
-        final room = (decoded['room'] as Map?)?.cast<String, dynamic>();
-        if (room != null) {
-          _roomWidth = (room['width'] as num?)?.toInt() ?? _roomWidth;
-          _roomHeight = (room['height'] as num?)?.toInt() ?? _roomHeight;
-          _step = RoomDesignerStep.design;
-        }
-        final items = (decoded['items'] as List?) ?? <dynamic>[];
-        _items
-          ..clear()
-          ..addAll(
-            items
-                .map((entry) => PlacedItem.fromJson(
-                      (entry as Map).cast<String, dynamic>(),
-                    ))
-                .toList(growable: false),
-          );
-      }
+      // Session storage disabled - no persistence
     } catch (error) {
       _errorMessage = 'Failed to load session data: $error';
       debugPrint(_errorMessage);
@@ -522,7 +499,7 @@ class RoomDesignerController extends ChangeNotifier {
       'items': _items.map((entry) => entry.toJson()).toList(growable: false),
       'updatedAt': DateTime.now().toIso8601String(),
     };
-    _sessionStorage.write(sessionKey, jsonEncode(payload));
+    // Session storage disabled - no persistence
     debugPrint('Da luu layout vao session.');
     return SaveStatus.ok;
   }
@@ -576,7 +553,7 @@ class RoomDesignerController extends ChangeNotifier {
   }
 
   void clearSession() {
-    _sessionStorage.remove(sessionKey);
+    // Session storage disabled - no persistence
   }
 
   void render(ui.Canvas canvas, ui.Size size) {

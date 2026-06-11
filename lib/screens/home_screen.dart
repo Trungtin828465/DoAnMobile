@@ -1,10 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
-import '../controllers/auth_controller.dart';
-import '../models/user_model.dart';
-import '../services/room_service.dart';
 import 'room_designer_screen.dart';
-import 'chat_screen.dart';
+import 'camera_screen.dart';
 
 const Color _primaryColor = Color(0xFF2563EB);
 const Color _accentColor = Color(0xFF10B981);
@@ -21,54 +19,18 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  late AuthController _authController;
-  User? _currentUser;
-  bool _isLoading = true;
+  bool _isLoading = false;
   List<Map<String, dynamic>> _rooms = [];
-  bool _isFetchingRooms = false;
 
   @override
   void initState() {
     super.initState();
-    _authController = AuthController();
-    _loadCurrentUser();
+    // Khởi tạo với danh sách phòng mặc định
+    _rooms = [];
   }
 
-  @override
-  void dispose() {
-    _authController.dispose();
-    super.dispose();
-  }
-
-  void _loadCurrentUser() async {
-    final user = await _authController.getCurrentUser();
-    setState(() {
-      _currentUser = user;
-      _isLoading = false;
-    });
-
-    if (user == null) {
-      Navigator.of(context).pushReplacementNamed('/login');
-    } else {
-      // Fetch danh sách phòng
-      _fetchRooms(user.id);
-    }
-  }
-
-  void _fetchRooms(String userId) async {
-    setState(() => _isFetchingRooms = true);
-    final rooms = await RoomService.getUserRooms(userId);
-    setState(() {
-      _rooms = rooms;
-      _isFetchingRooms = false;
-    });
-  }
-
-  void _handleLogout() async {
-    await _authController.logout();
-    if (mounted) {
-      Navigator.of(context).pushReplacementNamed('/login');
-    }
+  void _handleLogout() {
+    SystemNavigator.pop();
   }
 
   void _handleCreateNewRoom() {
@@ -77,12 +39,7 @@ class _HomeScreenState extends State<HomeScreen> {
       MaterialPageRoute(
         builder: (context) => const RoomDesignerScreen(),
       ),
-    ).then((_) {
-      // Refresh rooms khi quay lại từ designer
-      if (_currentUser != null) {
-        _fetchRooms(_currentUser!.id);
-      }
-    });
+    );
   }
 
   void _handleSelectRoom(Map<String, dynamic> room) {
@@ -91,12 +48,7 @@ class _HomeScreenState extends State<HomeScreen> {
       MaterialPageRoute(
         builder: (context) => RoomDesignerScreen(existingRoom: room),
       ),
-    ).then((_) {
-      // Refresh rooms khi quay lại từ designer
-      if (_currentUser != null) {
-        _fetchRooms(_currentUser!.id);
-      }
-    });
+    );
   }
 
   void _handleDeleteRoom(String roomId) {
@@ -112,26 +64,14 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            onPressed: () async {
+            onPressed: () {
               Navigator.pop(context);
+              setState(() {
+                _rooms.removeWhere((room) => (room['_id'] ?? room['id']) == roomId);
+              });
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Đang xóa phòng...')),
+                const SnackBar(content: Text('✅ Xóa phòng thành công')),
               );
-
-              final success = await RoomService.deleteRoom(roomId);
-              if (success) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('✅ Xóa phòng thành công')),
-                );
-                // Refresh rooms
-                if (_currentUser != null) {
-                  _fetchRooms(_currentUser!.id);
-                }
-              } else {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('❌ Lỗi xóa phòng')),
-                );
-              }
             },
             child: const Text('Xóa'),
           ),
@@ -140,32 +80,31 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  void _handleChatWithAI(String roomName) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => ChatScreen(roomName: roomName),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
-    if (_isLoading) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
-    }
-
     return Scaffold(
       backgroundColor: _surfaceColor,
       appBar: AppBar(
-        title: const Text('3D Room Designer'),
+        title: const Text('AI Hỗ trợ Người Khiếm Thị'),
         centerTitle: true,
         backgroundColor: _primaryColor,
         foregroundColor: Colors.white,
         elevation: 0,
         actions: [
+          IconButton(
+            icon: const Icon(Icons.play_arrow),
+            tooltip: 'Bắt đầu hỗ trợ',
+            onPressed: () {
+              Navigator.push(
+                context,
+                PageRouteBuilder(
+                  pageBuilder: (_, __, ___) => const CameraScreen(),
+                  transitionsBuilder: (_, animation, __, child) =>
+                      FadeTransition(opacity: animation, child: child),
+                ),
+              );
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.logout),
             onPressed: _handleLogout,
@@ -217,9 +156,9 @@ class _HomeScreenState extends State<HomeScreen> {
                               ),
                             ),
                             const SizedBox(height: 4),
-                            Text(
-                              'Xin chào, ${_currentUser?.fullName ?? "User"}',
-                              style: const TextStyle(
+                            const Text(
+                              'Xin chào, User',
+                              style: TextStyle(
                                 fontSize: 14,
                                 color: Colors.white70,
                               ),
@@ -285,11 +224,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ],
                   ),
                   const SizedBox(height: 16),
-                  if (_isFetchingRooms)
-                    const Center(
-                      child: CircularProgressIndicator(),
-                    )
-                  else if (_rooms.isEmpty)
+                  if (_rooms.isEmpty)
                     Container(
                       padding: const EdgeInsets.all(32),
                       decoration: BoxDecoration(
@@ -389,16 +324,6 @@ class _HomeScreenState extends State<HomeScreen> {
                                     ],
                                   ),
                                   onTap: () => _handleSelectRoom(room),
-                                ),
-                                PopupMenuItem(
-                                  child: const Row(
-                                    children: [
-                                      Icon(Icons.chat, size: 20, color: Color(0xFF10B981)),
-                                      SizedBox(width: 8),
-                                      Text('💬 AI Chat', style: TextStyle(color: Color(0xFF10B981))),
-                                    ],
-                                  ),
-                                  onTap: () => _handleChatWithAI(roomName),
                                 ),
                                 PopupMenuItem(
                                   child: const Row(
