@@ -4,11 +4,11 @@ import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
-import '../services/detection_api_service.dart';
 import '../services/tts_api_service.dart';
 import '../services/tflite_detection_service.dart';
 import '../services/object_mapping_service.dart';
 import '../services/guidance_service.dart';
+
 class CameraScreen extends StatefulWidget {
   const CameraScreen({super.key});
 
@@ -22,7 +22,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   late CameraController _cameraController;
   late stt.SpeechToText _speechToText;
   late TTSApiService _ttsApi;
-  late DetectionApiService _detectionApi;
+  late TFLiteDetectionService _detectionService;
 
   bool _isCameraInitialized = false;
   bool _isSpeechInitialized = false;
@@ -40,6 +40,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   String _apiStatus = 'Chưa chụp ảnh';
   String? _lastCapturedImagePath;
   String? _lastAnalyzedImagePath;
+  Size? _lastImageSize;
   List<TFLiteDetectionResult> _lastDetections = [];
   DateTime _lastSpeechTime = DateTime.now();
   DateTime? _lastSpeechErrorTime;
@@ -87,9 +88,15 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       }
       print('✅ Đã khởi tạo TTS API Service');
 
-      _detectionApi = DetectionApiService();
-      _isDetectionInitialized = true;
-      print('✅ Đã khởi tạo Detection API Service');
+      _detectionService = TFLiteDetectionService();
+      try {
+        await _detectionService.initialize();
+        _isDetectionInitialized = true;
+        print('✅ Đã khởi tạo TFLite Detection Service');
+      } catch (e) {
+        _isDetectionInitialized = false;
+        print('⚠️ Detect local chưa sẵn sàng: $e');
+      }
 
       print('=== Khởi tạo màn hình camera thành công ===');
 
@@ -169,14 +176,23 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   }
 
   Future<void> _captureAndAnalyzeImage() async {
-    if (!_isCameraInitialized || !_isDetectionInitialized) {
-      print('⚠️ Camera/API: chưa sẵn sàng để chụp ảnh');
+    if (!_isCameraInitialized) {
+      print('⚠️ Camera: chưa sẵn sàng để chụp ảnh');
+      return;
+    }
+
+    if (!_isDetectionInitialized) {
+      const message = 'TFLite chưa sẵn sàng, hãy thêm assets/models/best.tflite';
+      print('⚠️ Detect local: $message');
+      if (mounted) {
+        setState(() => _apiStatus = message);
+      }
       return;
     }
 
     if (_activeTask != _CameraTask.idle) {
       final message = 'Đang bận tác vụ khác, vui lòng chờ xong rồi chụp lại';
-      print('⚠️ Camera/API: $message');
+      print('⚠️ Detect local: $message');
       if (mounted) {
         setState(() => _apiStatus = message);
       }
@@ -196,24 +212,32 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     try {
       print('📷 Camera: bắt đầu chụp ảnh');
       final image = await _cameraController.takePicture();
-      _lastCapturedImagePath = image.path;
       print('✅ Camera: đã chụp ảnh tại ${image.path}');
 
       if (mounted) {
-        setState(() => _apiStatus = 'Đã chụp ảnh, đang gửi lên API...');
+        setState(() {
+          _lastCapturedImagePath = image.path;
+          _lastAnalyzedImagePath = null;
+          _lastImageSize = null;
+          _lastDetections = [];
+          _apiStatus = 'Đã chụp ảnh, đang detect local bằng TFLite...';
+        });
       }
 
-      final result = await _detectionApi.analyzeImage(
+      final result = await _detectionService.detectImageFile(
         File(image.path),
-        targetLabel: _targetObject,
       );
 
       if (!mounted) return;
 
       setState(() {
-        _lastAnalyzedImagePath = result.savedImagePath;
+        _lastAnalyzedImagePath = result.annotatedImagePath;
+        _lastImageSize = Size(
+          result.imageWidth.toDouble(),
+          result.imageHeight.toDouble(),
+        );
         _lastDetections = result.detections;
-        _apiStatus = result.message;
+        _apiStatus = 'Detect local xong: ${result.count} vật thể';
       });
 
       if (_targetObject != null && result.detections.isNotEmpty) {
@@ -230,12 +254,12 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
         } else {
           setState(() {
             _lastGuidance =
-                'API đã phân tích ảnh nhưng chưa thấy ${ObjectMappingService.getVietnameseName(_targetObject!)}';
+                'Đã detect ảnh nhưng chưa thấy ${ObjectMappingService.getVietnameseName(_targetObject!)}';
           });
         }
       }
     } catch (e) {
-      print('❌ Camera/API: lỗi khi chụp hoặc phân tích ảnh: $e');
+      print('❌ Detect local: lỗi khi chụp hoặc phân tích ảnh: $e');
       if (mounted) {
         setState(() => _apiStatus = 'Lỗi khi phân tích ảnh: $e');
         ScaffoldMessenger.of(context).showSnackBar(
@@ -558,6 +582,9 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     if (_isTtsInitialized) {
       _ttsApi.dispose();
     }
+    if (_isDetectionInitialized) {
+      _detectionService.dispose();
+    }
     super.dispose();
   }
 
@@ -575,10 +602,14 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
         backgroundColor: Colors.black,
         body: Stack(
           children: [
-            CameraPreview(_cameraController),
+            Positioned.fill(child: _buildCameraOrImagePreview()),
             if (_lastDetections.isNotEmpty)
               CustomPaint(
-                painter: DetectionPainter(_lastDetections, _targetObject),
+                painter: DetectionPainter(
+                  _lastDetections,
+                  _targetObject,
+                  sourceSize: _lastImageSize,
+                ),
                 size: Size.infinite,
               ),
             Positioned(
@@ -642,7 +673,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
           const SizedBox(height: 4),
           Text(
             [
-              'API ảnh: $_apiStatus',
+              'Detect local: $_apiStatus',
               if (_lastAnalyzedImagePath != null) 'Ảnh phân tích: $_lastAnalyzedImagePath',
             ].join('\n'),
             maxLines: 3,
@@ -650,6 +681,23 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
             style: const TextStyle(color: Colors.white70, fontSize: 11),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildCameraOrImagePreview() {
+    if (_lastCapturedImagePath == null) {
+      return CameraPreview(_cameraController);
+    }
+
+    return Container(
+      color: Colors.black,
+      alignment: Alignment.center,
+      child: Image.file(
+        File(_lastCapturedImagePath!),
+        fit: BoxFit.contain,
+        width: double.infinity,
+        height: double.infinity,
       ),
     );
   }
@@ -745,11 +793,18 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 class DetectionPainter extends CustomPainter {
   final List<TFLiteDetectionResult> detections;
   final String? targetObject;
+  final Size? sourceSize;
 
-  DetectionPainter(this.detections, this.targetObject);
+  DetectionPainter(
+    this.detections,
+    this.targetObject, {
+    this.sourceSize,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
+    final fittedImageRect = _calculateFittedImageRect(size);
+
     for (final detection in detections) {
       final isTarget = targetObject == detection.label;
       final color = isTarget ? Colors.green : Colors.blue;
@@ -758,12 +813,7 @@ class DetectionPainter extends CustomPainter {
         ..strokeWidth = 2
         ..style = PaintingStyle.stroke;
 
-      final rect = Rect.fromLTWH(
-        detection.x,
-        detection.y,
-        detection.width,
-        detection.height,
-      );
+      final rect = _scaleDetectionRect(detection, fittedImageRect);
 
       canvas.drawRect(rect, paint);
 
@@ -775,8 +825,57 @@ class DetectionPainter extends CustomPainter {
         textDirection: TextDirection.ltr,
       );
       textPainter.layout();
-      textPainter.paint(canvas, Offset(detection.x, detection.y - 20));
+      textPainter.paint(
+        canvas,
+        Offset(rect.left, (rect.top - 20).clamp(0, size.height).toDouble()),
+      );
     }
+  }
+
+  Rect _calculateFittedImageRect(Size canvasSize) {
+    if (sourceSize == null || sourceSize!.width <= 0 || sourceSize!.height <= 0) {
+      return Offset.zero & canvasSize;
+    }
+
+    final imageAspect = sourceSize!.width / sourceSize!.height;
+    final canvasAspect = canvasSize.width / canvasSize.height;
+
+    double drawWidth;
+    double drawHeight;
+    if (canvasAspect > imageAspect) {
+      drawHeight = canvasSize.height;
+      drawWidth = drawHeight * imageAspect;
+    } else {
+      drawWidth = canvasSize.width;
+      drawHeight = drawWidth / imageAspect;
+    }
+
+    return Rect.fromLTWH(
+      (canvasSize.width - drawWidth) / 2,
+      (canvasSize.height - drawHeight) / 2,
+      drawWidth,
+      drawHeight,
+    );
+  }
+
+  Rect _scaleDetectionRect(TFLiteDetectionResult detection, Rect fittedImageRect) {
+    if (sourceSize == null || sourceSize!.width <= 0 || sourceSize!.height <= 0) {
+      return Rect.fromLTWH(
+        detection.x,
+        detection.y,
+        detection.width,
+        detection.height,
+      );
+    }
+
+    final scaleX = fittedImageRect.width / sourceSize!.width;
+    final scaleY = fittedImageRect.height / sourceSize!.height;
+    return Rect.fromLTWH(
+      fittedImageRect.left + detection.x * scaleX,
+      fittedImageRect.top + detection.y * scaleY,
+      detection.width * scaleX,
+      detection.height * scaleY,
+    );
   }
 
   @override

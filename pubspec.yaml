@@ -48,7 +48,7 @@ dependencies:
   uuid: ^4.0.0
   sensors_plus: ^3.0.0
 
-  tflite_flutter: ^0.10.4
+  tflite_flutter: ^0.11.0
   image: ^4.1.0
 dev_dependencies:
   flutter_test:
