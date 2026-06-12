@@ -1,13 +1,14 @@
-import 'dart:typed_data';
+import 'dart:io';
+
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
+import '../services/detection_api_service.dart';
 import '../services/tts_api_service.dart';
 import '../services/tflite_detection_service.dart';
 import '../services/object_mapping_service.dart';
 import '../services/guidance_service.dart';
-
 class CameraScreen extends StatefulWidget {
   const CameraScreen({super.key});
 
@@ -15,20 +16,35 @@ class CameraScreen extends StatefulWidget {
   State<CameraScreen> createState() => _CameraScreenState();
 }
 
+enum _CameraTask { idle, listening, detecting, speaking }
+
 class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver {
   late CameraController _cameraController;
   late stt.SpeechToText _speechToText;
   late TTSApiService _ttsApi;
-  late TFLiteDetectionService _detectionService;
+  late DetectionApiService _detectionApi;
 
   bool _isCameraInitialized = false;
+  bool _isSpeechInitialized = false;
+  bool _isSpeechAvailable = false;
+  bool _isTtsInitialized = false;
+  bool _isDetectionInitialized = false;
   bool _isListening = false;
+  bool _isHandlingSpeechResult = false;
   bool _isProcessing = false;
-  bool _continuousListening = true;
+  bool _continuousListening = false;
+  _CameraTask _activeTask = _CameraTask.idle;
   String? _targetObject;
   String _lastGuidance = 'Ứng dụng đang lắng nghe...';
+  String _recognizedText = '';
+  String _apiStatus = 'Chưa chụp ảnh';
+  String? _lastCapturedImagePath;
+  String? _lastAnalyzedImagePath;
   List<TFLiteDetectionResult> _lastDetections = [];
   DateTime _lastSpeechTime = DateTime.now();
+  DateTime? _lastSpeechErrorTime;
+  DateTime? _lastListenStartTime;
+  DateTime? _speechBlockedUntil;
   static const int _speechCooldownMs = 2000;
 
   @override
@@ -40,50 +56,52 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
   Future<void> _initializeServices() async {
     try {
-      print('=== Starting Service Initialization ===');
-      
+      print('=== Bắt đầu khởi tạo màn hình camera ===');
+
       await _requestPermissions();
-      print('✅ Permissions granted');
-      
+      print('✅ Đã cấp quyền camera và micro');
+
       await _initializeCamera();
-      print('✅ Camera initialized');
-      
+      print('✅ Đã khởi tạo camera');
+
       _speechToText = stt.SpeechToText();
-      await _speechToText.initialize(
-        onError: (error) {
-          print('STT Error: $error');
-          _speak('Lỗi nhận diện giọng nói: $error');
-        },
-        onStatus: (status) => print('STT Status: $status'),
+      _isSpeechAvailable = await _speechToText.initialize(
+        onError: _handleSpeechError,
+        onStatus: _handleSpeechStatus,
         debugLogging: true,
       );
-      print('✅ Speech-to-Text initialized');
+      _isSpeechInitialized = true;
+      if (_isSpeechAvailable) {
+        print('✅ Đã khởi tạo Speech-to-Text');
+      } else {
+        print('⚠️ STT: thiết bị chưa có dịch vụ nhận diện giọng nói khả dụng');
+      }
 
       _ttsApi = TTSApiService();
+      _isTtsInitialized = true;
       final healthOk = await _ttsApi.healthCheck();
       if (healthOk) {
-        print('✅ TTS API backend connected');
+        print('✅ Đã kết nối backend TTS');
       } else {
-        print('⚠️ TTS API backend connection failed - will retry on speak');
+        print('⚠️ Chưa kết nối được backend TTS, sẽ thử lại khi đọc');
       }
-      print('✅ TTS API Service initialized');
+      print('✅ Đã khởi tạo TTS API Service');
 
-      _detectionService = TFLiteDetectionService();
-      await _detectionService.initialize();
-      print('✅ Detection service initialized');
+      _detectionApi = DetectionApiService();
+      _isDetectionInitialized = true;
+      print('✅ Đã khởi tạo Detection API Service');
 
-      print('=== All Services Initialized Successfully ===');
-      
+      print('=== Khởi tạo màn hình camera thành công ===');
+
       if (mounted) {
-        _speak('Ứng dụng Hỗ trợ di chuyển đã sẵn sàng. Đang bắt đầu lắng nghe giọng nói.');
+        _speak(
+          'Ứng dụng Hỗ trợ di chuyển đã sẵn sàng. Hãy bấm mic để bắt đầu nói.',
+          restartListening: false,
+        );
         setState(() {});
-        Future.delayed(const Duration(seconds: 2), () {
-          if (mounted) _startContinuousListening();
-        });
       }
     } catch (e) {
-      print('❌ Init error: $e');
-      print('Stack trace: $e');
+      print('❌ Lỗi khởi tạo màn hình camera: $e');
       if (mounted) {
         _speak('Lỗi khởi tạo');
         ScaffoldMessenger.of(context).showSnackBar(
@@ -121,61 +139,13 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       );
 
       await _cameraController.initialize();
-      _startRealtimeDetection();
       _isCameraInitialized = true;
     } catch (e) {
-      print('Camera init error: $e');
+      print('❌ Camera: lỗi khởi tạo: $e');
       rethrow;
     }
   }
-
-  void _startRealtimeDetection() {
-    _cameraController.startImageStream((image) async {
-      if (_isProcessing || _targetObject == null) return;
-      _isProcessing = true;
-
-      try {
-        final imageBytes = _convertCameraImageToBytes(image);
-        final detections = await _detectionService.detect(imageBytes);
-
-        if (mounted) {
-          setState(() => _lastDetections = detections);
-
-          if (_targetObject != null) {
-            TFLiteDetectionResult? found;
-            try {
-              found = detections.firstWhere(
-                (d) => d.label == _targetObject,
-              );
-            } catch (e) {
-              found = null;
-            }
-
-            if (found != null) {
-              await _handleObjectFound(found);
-            } else {
-              if (_shouldSpeak()) {
-                await _speak(
-                  'Chưa thấy ${ObjectMappingService.getVietnameseName(_targetObject!)}, vui lòng xoay camera',
-                );
-              }
-            }
-          }
-        }
-      } catch (e) {
-        print('Detection error: $e');
-      } finally {
-        _isProcessing = false;
-      }
-    });
-  }
-
-  Uint8List _convertCameraImageToBytes(CameraImage image) {
-    // Simplified - trong production cần proper conversion
-    return Uint8List(0);
-  }
-
-  Future<void> _handleObjectFound(TFLiteDetectionResult detection) async {
+  String _handleObjectFound(TFLiteDetectionResult detection) {
     final screenSize = MediaQuery.of(context).size;
     final zone = GuidanceService.analyzeHorizontalPosition(
       detection.centerX,
@@ -195,8 +165,88 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       setState(() => _lastGuidance = guidance);
     }
 
-    if (_shouldSpeak()) {
-      await _speak(guidance);
+    return guidance;
+  }
+
+  Future<void> _captureAndAnalyzeImage() async {
+    if (!_isCameraInitialized || !_isDetectionInitialized) {
+      print('⚠️ Camera/API: chưa sẵn sàng để chụp ảnh');
+      return;
+    }
+
+    if (_activeTask != _CameraTask.idle) {
+      final message = 'Đang bận tác vụ khác, vui lòng chờ xong rồi chụp lại';
+      print('⚠️ Camera/API: $message');
+      if (mounted) {
+        setState(() => _apiStatus = message);
+      }
+      return;
+    }
+
+    if (_isListening) {
+      await _stopListeningQuiet();
+    }
+
+    _activeTask = _CameraTask.detecting;
+    _isProcessing = true;
+    if (mounted) {
+      setState(() => _apiStatus = 'Đang chụp ảnh...');
+    }
+
+    try {
+      print('📷 Camera: bắt đầu chụp ảnh');
+      final image = await _cameraController.takePicture();
+      _lastCapturedImagePath = image.path;
+      print('✅ Camera: đã chụp ảnh tại ${image.path}');
+
+      if (mounted) {
+        setState(() => _apiStatus = 'Đã chụp ảnh, đang gửi lên API...');
+      }
+
+      final result = await _detectionApi.analyzeImage(
+        File(image.path),
+        targetLabel: _targetObject,
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        _lastAnalyzedImagePath = result.savedImagePath;
+        _lastDetections = result.detections;
+        _apiStatus = result.message;
+      });
+
+      if (_targetObject != null && result.detections.isNotEmpty) {
+        TFLiteDetectionResult? found;
+        for (final detection in result.detections) {
+          if (detection.label == _targetObject) {
+            found = detection;
+            break;
+          }
+        }
+
+        if (found != null) {
+          _handleObjectFound(found);
+        } else {
+          setState(() {
+            _lastGuidance =
+                'API đã phân tích ảnh nhưng chưa thấy ${ObjectMappingService.getVietnameseName(_targetObject!)}';
+          });
+        }
+      }
+    } catch (e) {
+      print('❌ Camera/API: lỗi khi chụp hoặc phân tích ảnh: $e');
+      if (mounted) {
+        setState(() => _apiStatus = 'Lỗi khi phân tích ảnh: $e');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Lỗi phân tích ảnh: $e')),
+        );
+      }
+    } finally {
+      _isProcessing = false;
+      if (_activeTask == _CameraTask.detecting) {
+        _activeTask = _CameraTask.idle;
+      }
     }
   }
 
@@ -205,61 +255,204 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     return now.difference(_lastSpeechTime).inMilliseconds > _speechCooldownMs;
   }
 
-  Future<void> _speak(String text) async {
+  Future<void> _speak(String text, {bool restartListening = true}) async {
+    if (!_isTtsInitialized || _activeTask == _CameraTask.speaking) return;
+
+    if (_activeTask == _CameraTask.listening) {
+      await _stopListeningQuiet();
+    }
+
+    _activeTask = _CameraTask.speaking;
     _lastSpeechTime = DateTime.now();
-    print('🔊 Speaking: "$text"');
+    print('🔊 TTS: bắt đầu đọc "$text"');
     try {
       await _ttsApi.speak(text, lang: 'vi');
-      print('✅ TTS API speak called');
+      print('✅ TTS: đã gửi yêu cầu đọc thành công');
     } catch (e) {
-      print('❌ TTS API error: $e');
+      print('❌ TTS: lỗi khi đọc: $e');
+    } finally {
+      if (_activeTask == _CameraTask.speaking) {
+        _activeTask = _CameraTask.idle;
+      }
+      if (restartListening) {
+        _scheduleListeningRestart();
+      }
     }
   }
 
   Future<void> _startContinuousListening() async {
-    if (_isListening || !_continuousListening) return;
-    
-    print('🎤 Starting continuous listening...');
-    
-    if (!_speechToText.isAvailable) {
-      print('❌ Speech-to-Text not available');
-      Future.delayed(const Duration(seconds: 5), _startContinuousListening);
+    if (_isListening ||
+        !_isSpeechInitialized ||
+        _activeTask != _CameraTask.idle) {
       return;
     }
 
-    _isListening = true;
-    if (mounted) setState(() {});
+    print('🎤 STT: bắt đầu thu âm, hãy nói vào micro');
 
-    print('🔴 Continuous listening started');
+    final now = DateTime.now();
+    if (_speechBlockedUntil != null && now.isBefore(_speechBlockedUntil!)) {
+      final seconds = _speechBlockedUntil!.difference(now).inSeconds + 1;
+      final message = 'STT đang bị Google giới hạn, vui lòng chờ $seconds giây rồi thử lại';
+      print('⚠️ STT: $message');
+      if (mounted) {
+        setState(() => _recognizedText = message);
+      }
+      return;
+    }
+
+    if (_lastListenStartTime != null &&
+        now.difference(_lastListenStartTime!).inMilliseconds < 2500) {
+      const message = 'Bấm mic hơi nhanh, vui lòng chờ 2 giây rồi thử lại';
+      print('⚠️ STT: $message');
+      if (mounted) {
+        setState(() => _recognizedText = message);
+      }
+      return;
+    }
+
+    if (!_isSpeechAvailable || !_speechToText.isAvailable) {
+      const message =
+          'STT chưa khả dụng: hãy bật/cài Google Speech Recognition trên thiết bị';
+      print('❌ STT: $message');
+      if (mounted) {
+        setState(() => _recognizedText = message);
+      }
+      return;
+    }
+
+    try {
+      await _speechToText.cancel();
+      await Future.delayed(const Duration(milliseconds: 200));
+    } catch (e) {
+      print('⚠️ STT: không reset được phiên cũ: $e');
+    }
+
+    _isListening = true;
+    _activeTask = _CameraTask.listening;
+    _lastListenStartTime = now;
+    _recognizedText = 'Đang nghe...';
+    if (mounted) {
+      setState(() {});
+    }
+
+    print('🔴 STT: đang thu âm');
     try {
       await _speechToText.listen(
-        onResult: (result) {
+        onResult: (result) async {
           final command = result.recognizedWords.trim();
           if (command.isEmpty) return;
-          
-          print('📝 Heard: "$command" (final: ${result.finalResult})');
-          
-          if (result.finalResult && command.isNotEmpty) {
-            print('✅ Final result: $command');
-            _processVoiceCommand(command);
-            Future.delayed(const Duration(milliseconds: 500), _startContinuousListening);
+
+          print('📝 STT: nghe được "$command" (kết quả cuối: ${result.finalResult})');
+          if (mounted) {
+            setState(() => _recognizedText = command);
+          }
+
+          if (result.finalResult && command.isNotEmpty && !_isHandlingSpeechResult) {
+            _isHandlingSpeechResult = true;
+            print('✅ STT: kết quả cuối = $command');
+            try {
+              await _stopListeningQuiet();
+            } finally {
+              _isHandlingSpeechResult = false;
+            }
           }
         },
         listenFor: const Duration(seconds: 30),
         pauseFor: const Duration(seconds: 5),
-        partialResults: false,
+        partialResults: true,
         localeId: 'vi_VN',
       );
     } catch (e) {
-      print('❌ Listen error: $e');
+      print('❌ STT: lỗi khi thu âm: $e');
       _isListening = false;
+      if (_activeTask == _CameraTask.listening) {
+        _activeTask = _CameraTask.idle;
+      }
       if (mounted) setState(() {});
-      Future.delayed(const Duration(seconds: 3), _startContinuousListening);
     }
   }
 
+  void _handleSpeechStatus(String status) {
+    print('ℹ️ STT: trạng thái = $status');
+    if (status == 'done' || status == 'notListening' || status == 'doneNoResult') {
+      _isListening = false;
+      if (_activeTask == _CameraTask.listening) {
+        _activeTask = _CameraTask.idle;
+      }
+      if (mounted) {
+        setState(() {
+          if (_recognizedText == 'Đang nghe...' || status == 'doneNoResult') {
+            _recognizedText = 'Chưa nghe được text, hãy bấm mic và nói lại';
+          }
+        });
+      }
+      if (_continuousListening && !_isHandlingSpeechResult && _targetObject == null) {
+        _scheduleListeningRestart();
+      }
+    }
+  }
+
+  void _handleSpeechError(dynamic error) {
+    final now = DateTime.now();
+    final isDuplicateError = _lastSpeechErrorTime != null &&
+        now.difference(_lastSpeechErrorTime!).inMilliseconds < 1000;
+    _lastSpeechErrorTime = now;
+
+    final rawError = error.toString();
+    final isNoMatch = rawError.contains('error_no_match');
+    final isTooManyRequests = rawError.contains('error_too_many_requests');
+    final message = isNoMatch
+        ? 'Chưa nhận được nội dung giọng nói, hãy bấm mic và nói lại rõ hơn'
+        : isTooManyRequests
+        ? 'STT đang bị gọi quá nhiều lần, chờ khoảng 30 giây rồi bấm mic lại'
+        : rawError.contains('error_client')
+        ? 'STT lỗi: thiết bị chưa chọn/cài dịch vụ nhận diện giọng nói'
+        : 'STT lỗi: $rawError';
+
+    if (isTooManyRequests) {
+      _speechBlockedUntil = DateTime.now().add(const Duration(seconds: 30));
+    }
+
+    if (!isDuplicateError) {
+      print('❌ STT: $message');
+      if (!isNoMatch) {
+        print(
+          '💡 STT: trên máy thật, hãy kiểm tra Google app/Speech Services và secure setting voice_recognition_service',
+        );
+      }
+    }
+
+    _isListening = false;
+    _isHandlingSpeechResult = false;
+    if (_activeTask == _CameraTask.listening) {
+      _activeTask = _CameraTask.idle;
+    }
+
+    if (mounted) {
+      setState(() {
+        _recognizedText = message;
+      });
+    }
+  }
+
+  void _scheduleListeningRestart({
+    Duration delay = const Duration(milliseconds: 500),
+  }) {
+    if (!_continuousListening || !_isSpeechInitialized) return;
+
+    Future.delayed(delay, () {
+      if (!mounted ||
+          !_continuousListening ||
+          _isListening ||
+          _activeTask != _CameraTask.idle) {
+        return;
+      }
+
+      _startContinuousListening();
+    });
+  }
   void _startListening() {
-    print('🎤 Toggle listening (manual)');
+    print('🎤 STT: bấm nút mic');
     if (_isListening) {
       _stopListening();
     } else {
@@ -267,46 +460,74 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
-  void _stopListening() {
-    print('⏹️ Stopping listening');
+  Future<void> _stopListening() async {
+    print('⏹️ STT: dừng thu âm');
     _isListening = false;
-    _speechToText.stop();
+    if (_isSpeechInitialized) {
+      await _speechToText.stop();
+    }
+    if (_activeTask == _CameraTask.listening) {
+      _activeTask = _CameraTask.idle;
+    }
     if (mounted) {
       setState(() {});
     }
-    if (_continuousListening) {
-      Future.delayed(const Duration(milliseconds: 500), _startContinuousListening);
+  }
+
+  Future<void> _stopListeningQuiet() async {
+    print('⏹️ STT: dừng thu âm nội bộ');
+    if (_isSpeechInitialized) {
+      await _speechToText.stop();
+    }
+    _isListening = false;
+    if (_activeTask == _CameraTask.listening) {
+      _activeTask = _CameraTask.idle;
     }
   }
 
-  void _stopListeningQuiet() {
-    print('⏹️ Stopping listening (quiet)');
-    _speechToText.stop();
-    _isListening = false;
-  }
-
-  void _processVoiceCommand(String command) {
-    print('🎤 Processing voice command: "$command"');
+  Future<void> _processVoiceCommand(String command) async {
+    print('📨 STT: xử lý text được gửi: "$command"');
 
     if (command.toLowerCase().contains('dừng') ||
         command.toLowerCase().contains('thoát')) {
-      print('📍 Stop command detected');
+      print('📍 STT: phát hiện lệnh dừng/thoát');
       _stop();
       return;
     }
 
     final label = ObjectMappingService.parseVoiceCommand(command);
-    print('Parsed label: $label');
-    
+    print('🎯 STT: label sau khi parse = $label');
+
     if (label != null) {
       final name = ObjectMappingService.getVietnameseName(label);
-      print('✅ Object found: $name');
-      _speak('Đang tìm $name');
+      print('✅ STT: đã chọn mục tiêu cần tìm = $name');
       setState(() => _targetObject = label);
+      await _speak('Đang tìm $name', restartListening: false);
     } else {
-      print('❌ Command not recognized');
-      _speak('Lệnh không hiểu. Vui lòng nói lại.');
+      print('❌ STT: không hiểu nội dung text');
+      await _speak('Lệnh không hiểu. Vui lòng nói lại.');
     }
+  }
+
+  Future<void> _sendRecognizedText() async {
+    final text = _recognizedText.trim();
+    if (text.isEmpty) {
+      print('⚠️ STT: chưa có text để gửi');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Chưa có text để gửi')),
+      );
+      return;
+    }
+
+    if (_activeTask != _CameraTask.idle) {
+      print('⚠️ STT: đang bận tác vụ khác, chưa gửi text được');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Đang bận, vui lòng thử lại sau')),
+      );
+      return;
+    }
+
+    await _processVoiceCommand(text);
   }
 
   void _stop() {
@@ -318,20 +539,25 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (!_isCameraInitialized) return;
     if (state == AppLifecycleState.paused) {
-      _cameraController.stopImageStream();
+      print('ℹ️ Camera: ứng dụng tạm dừng');
     } else if (state == AppLifecycleState.resumed) {
-      _startRealtimeDetection();
+      print('ℹ️ Camera: ứng dụng hoạt động lại');
     }
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _cameraController.dispose();
+    if (_isCameraInitialized) {
+      _cameraController.dispose();
+    }
     _stopListeningQuiet();
-    _speechToText.cancel();
-    _ttsApi.dispose();
-    _detectionService.dispose();
+    if (_isSpeechInitialized) {
+      _speechToText.cancel();
+    }
+    if (_isTtsInitialized) {
+      _ttsApi.dispose();
+    }
     super.dispose();
   }
 
@@ -377,53 +603,139 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
               ),
             ),
             Positioned(
-              bottom: 0,
-              left: 0,
-              right: 0,
-              child: Container(
-                color: Colors.black.withOpacity(0.8),
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  children: [
-                    Text(
-                      _targetObject != null
-                          ? 'Đang tìm: ${ObjectMappingService.getVietnameseName(_targetObject!)}'
-                          : 'Chưa chọn object',
-                      style: const TextStyle(color: Colors.white, fontSize: 16),
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                      children: [
-                        FloatingActionButton(
-                          backgroundColor: _isListening ? Colors.green : Colors.blue,
-                          tooltip: _continuousListening ? 'Lắng nghe liên tục' : 'Tắt lắng nghe',
-                          onPressed: () {
-                            setState(() => _continuousListening = !_continuousListening);
-                            if (_continuousListening) {
-                              _startContinuousListening();
-                            } else {
-                              _stopListening();
-                            }
-                          },
-                          child: Icon(
-                            _continuousListening 
-                              ? (_isListening ? Icons.mic : Icons.mic_none)
-                              : Icons.mic_off,
-                          ),
-                        ),
-                        FloatingActionButton(
-                          backgroundColor: Colors.grey,
-                          onPressed: _stop,
-                          child: const Icon(Icons.stop),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
+              left: 12,
+              right: 12,
+              bottom: 100,
+              child: _buildStatusPanel(),
             ),
           ],
+        ),
+        bottomNavigationBar: _buildBottomTestBar(),
+      ),
+    );
+  }
+
+  Widget _buildStatusPanel() {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.78),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _targetObject != null
+                ? 'Đang tìm: ${ObjectMappingService.getVietnameseName(_targetObject!)}'
+                : 'Chưa chọn object',
+            style: const TextStyle(color: Colors.white, fontSize: 15),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            _recognizedText.isEmpty ? 'Text STT: chưa có' : 'Text STT: $_recognizedText',
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: Colors.white, fontSize: 13),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            [
+              'API ảnh: $_apiStatus',
+              if (_lastAnalyzedImagePath != null) 'Ảnh phân tích: $_lastAnalyzedImagePath',
+            ].join('\n'),
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: Colors.white70, fontSize: 11),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBottomTestBar() {
+    return SafeArea(
+      top: false,
+      child: Container(
+        height: 86,
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        decoration: const BoxDecoration(
+          color: Colors.black,
+          border: Border(
+            top: BorderSide(color: Colors.white24),
+          ),
+        ),
+        child: Row(
+          children: [
+            _buildBottomAction(
+              icon: _isListening ? Icons.mic_off : Icons.mic,
+              label: _isListening ? 'Tắt mic' : 'Bật mic',
+              color: _isListening ? Colors.red.shade700 : Colors.green.shade700,
+              onTap: _startListening,
+            ),
+            const SizedBox(width: 6),
+            _buildBottomAction(
+              icon: Icons.send,
+              label: 'Gửi text',
+              color: Colors.blue.shade700,
+              onTap: _sendRecognizedText,
+            ),
+            const SizedBox(width: 6),
+            _buildBottomAction(
+              icon: Icons.camera_alt,
+              label: 'Chụp ảnh',
+              color: Colors.orange.shade800,
+              onTap: _captureAndAnalyzeImage,
+            ),
+            const SizedBox(width: 6),
+            _buildBottomAction(
+              icon: Icons.stop_circle,
+              label: 'Dừng',
+              color: Colors.grey.shade700,
+              onTap: _stop,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBottomAction({
+    required IconData icon,
+    required String label,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return Expanded(
+      child: Material(
+        color: color,
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(14),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(icon, color: Colors.white, size: 28),
+                  const SizedBox(height: 4),
+                  Text(
+                    label,
+                    maxLines: 1,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ),
       ),
     );
