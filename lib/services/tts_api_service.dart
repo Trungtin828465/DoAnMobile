@@ -1,4 +1,4 @@
-import 'dart:typed_data';
+import 'dart:async';
 import 'package:http/http.dart' as http;
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
@@ -51,8 +51,25 @@ class TTSApiService {
           
           // Play audio từ bytes sử dụng BytesSource
           try {
+            final completer = Completer<void>();
+            late StreamSubscription<void> subscription;
+            subscription = _audioPlayer.onPlayerComplete.listen((_) {
+              if (!completer.isCompleted) {
+                completer.complete();
+              }
+              subscription.cancel();
+            });
+
             await _audioPlayer.play(BytesSource(response.bodyBytes), volume: 1.0);
             print('✅ TTS API: Đang phát âm thanh');
+            await completer.future.timeout(
+              const Duration(seconds: 45),
+              onTimeout: () {
+                subscription.cancel();
+              },
+            );
+            await _audioPlayer.stop();
+            print('✅ TTS API: Đã phát xong âm thanh');
           } catch (playError) {
             print('❌ TTS API Play Error: $playError');
             rethrow;

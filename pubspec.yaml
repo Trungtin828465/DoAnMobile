@@ -39,7 +39,8 @@ dependencies:
   vector_math: ^2.1.4
   path_provider: ^2.1.5
   flutter_joystick: ^0.2.2
-  speech_to_text: ^7.3.0
+  speech_to_text:
+    path: third_party/speech_to_text
   flutter_tts: ^4.2.5
   audioplayers: ^5.2.0
   flutter_dotenv: ^5.1.0
