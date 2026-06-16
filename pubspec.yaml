@@ -48,6 +48,7 @@ dependencies:
   camera: ^0.11.0+1
   uuid: ^4.0.0
   sensors_plus: ^3.0.0
+  webview_flutter: ^4.8.0
 
   tflite_flutter: ^0.11.0
   image: ^4.1.0
@@ -64,3 +65,15 @@ flutter:
     - assets/models/
     - assets/layouts/layout.json
     - assets/anh/
+    - assets/model/bed.glb
+    - assets/model/sofa.glb
+    - assets/model/chair.glb
+    - assets/model/table.glb
+    - assets/model/wardrobe.glb
+    - assets/model/refrigerator.glb
+    - assets/model/tv.glb
+    - assets/model/door.glb
+    - assets/model/window.glb
+    - assets/model/fan.glb
+    - assets/model/laptop.glb
+    - assets/model/washing_machine.glb

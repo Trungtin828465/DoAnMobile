@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import 'room_designer_screen.dart';
 import 'camera_screen.dart';
+import 'room_layout_screen.dart';
 
 const Color _primaryColor = Color(0xFF2563EB);
 const Color _accentColor = Color(0xFF10B981);
@@ -12,70 +12,39 @@ const Color _textPrimary = Color(0xFF1E293B);
 const Color _textSecondary = Color(0xFF64748B);
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({Key? key}) : super(key: key);
+  const HomeScreen({super.key});
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  bool _isLoading = false;
-  List<Map<String, dynamic>> _rooms = [];
-
-  @override
-  void initState() {
-    super.initState();
-    // Khởi tạo với danh sách phòng mặc định
-    _rooms = [];
-  }
-
   void _handleLogout() {
     SystemNavigator.pop();
   }
 
-  void _handleCreateNewRoom() {
+  void _openCameraSupport() {
     Navigator.push(
       context,
-      MaterialPageRoute(
-        builder: (context) => const RoomDesignerScreen(),
+      PageRouteBuilder(
+        pageBuilder: (_, __, ___) => const CameraScreen(),
+        transitionsBuilder: (_, animation, __, child) => FadeTransition(
+          opacity: animation,
+          child: child,
+        ),
       ),
     );
   }
 
-  void _handleSelectRoom(Map<String, dynamic> room) {
+  void _openRoomLayout() {
     Navigator.push(
       context,
-      MaterialPageRoute(
-        builder: (context) => RoomDesignerScreen(existingRoom: room),
-      ),
-    );
-  }
-
-  void _handleDeleteRoom(String roomId) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Xóa phòng'),
-        content: const Text('Bạn chắc chắn muốn xóa phòng này?\nHành động này không thể hoàn tác.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Hủy'),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            onPressed: () {
-              Navigator.pop(context);
-              setState(() {
-                _rooms.removeWhere((room) => (room['_id'] ?? room['id']) == roomId);
-              });
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('✅ Xóa phòng thành công')),
-              );
-            },
-            child: const Text('Xóa'),
-          ),
-        ],
+      PageRouteBuilder(
+        pageBuilder: (_, __, ___) => const RoomLayoutScreen(),
+        transitionsBuilder: (_, animation, __, child) => FadeTransition(
+          opacity: animation,
+          child: child,
+        ),
       ),
     );
   }
@@ -92,21 +61,18 @@ class _HomeScreenState extends State<HomeScreen> {
         elevation: 0,
         actions: [
           IconButton(
+            icon: const Icon(Icons.view_in_ar),
+            tooltip: 'Tạo phòng 3D',
+            onPressed: _openRoomLayout,
+          ),
+          IconButton(
             icon: const Icon(Icons.play_arrow),
             tooltip: 'Bắt đầu hỗ trợ',
-            onPressed: () {
-              Navigator.push(
-                context,
-                PageRouteBuilder(
-                  pageBuilder: (_, __, ___) => const CameraScreen(),
-                  transitionsBuilder: (_, animation, __, child) =>
-                      FadeTransition(opacity: animation, child: child),
-                ),
-              );
-            },
+            onPressed: _openCameraSupport,
           ),
           IconButton(
             icon: const Icon(Icons.logout),
+            tooltip: 'Thoát',
             onPressed: _handleLogout,
           ),
         ],
@@ -114,17 +80,16 @@ class _HomeScreenState extends State<HomeScreen> {
       body: SingleChildScrollView(
         child: Column(
           children: [
-            // Banner thông tin ứng dụng
             Container(
               width: double.infinity,
+              padding: const EdgeInsets.all(24),
               decoration: const BoxDecoration(
                 gradient: LinearGradient(
-                  colors: [_primaryColor, Color(0xFF1d47a3)],
+                  colors: [_primaryColor, Color(0xFF1D47A3)],
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                 ),
               ),
-              padding: const EdgeInsets.all(24),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -137,27 +102,27 @@ class _HomeScreenState extends State<HomeScreen> {
                           borderRadius: BorderRadius.circular(12),
                         ),
                         child: const Icon(
-                          Icons.home_work,
+                          Icons.assistant_navigation,
                           color: Colors.white,
                           size: 32,
                         ),
                       ),
                       const SizedBox(width: 16),
-                      Expanded(
+                      const Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text(
-                              '3D Room Designer',
+                            Text(
+                              'AI Hỗ trợ di chuyển',
                               style: TextStyle(
                                 fontSize: 24,
                                 fontWeight: FontWeight.bold,
                                 color: Colors.white,
                               ),
                             ),
-                            const SizedBox(height: 4),
-                            const Text(
-                              'Xin chào, User',
+                            SizedBox(height: 4),
+                            Text(
+                              'Nhận diện vật thể, giọng nói và tạo khối phòng 3D',
                               style: TextStyle(
                                 fontSize: 14,
                                 color: Colors.white70,
@@ -182,7 +147,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         SizedBox(width: 12),
                         Expanded(
                           child: Text(
-                            'Thiết kế phòng của bạn một cách dễ dàng. Tạo, lưu, sửa và xóa các phòng theo ý muốn.',
+                            'Bạn có thể mở camera hỗ trợ hoặc tạo khối phòng trống 3D từ chiều dài, chiều rộng và chiều cao.',
                             style: TextStyle(
                               fontSize: 12,
                               color: Colors.white70,
@@ -196,202 +161,118 @@ class _HomeScreenState extends State<HomeScreen> {
                 ],
               ),
             ),
-
-            // Danh sách phòng
             Padding(
               padding: const EdgeInsets.all(20),
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text(
-                        'Phòng của bạn',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: _textPrimary,
-                        ),
-                      ),
-                      Text(
-                        '${_rooms.length} phòng',
-                        style: const TextStyle(
-                          fontSize: 14,
-                          color: _textSecondary,
-                        ),
-                      ),
-                    ],
+                  _FeatureCard(
+                    icon: Icons.camera_alt_outlined,
+                    iconColor: _primaryColor,
+                    title: 'Mở camera hỗ trợ',
+                    description:
+                        'Sử dụng mic, TTS và nhận diện vật thể để hỗ trợ người dùng.',
+                    buttonText: 'Bắt đầu hỗ trợ',
+                    buttonColor: _accentColor,
+                    onPressed: _openCameraSupport,
                   ),
                   const SizedBox(height: 16),
-                  if (_rooms.isEmpty)
-                    Container(
-                      padding: const EdgeInsets.all(32),
-                      decoration: BoxDecoration(
-                        color: _cardColor,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.grey.shade200),
-                      ),
-                      child: Column(
-                        children: [
-                          Icon(
-                            Icons.home_outlined,
-                            size: 48,
-                            color: Colors.grey.shade400,
-                          ),
-                          const SizedBox(height: 16),
-                          const Text(
-                            'Bạn chưa có phòng nào',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w500,
-                              color: _textPrimary,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          const Text(
-                            'Hãy tạo phòng mới để bắt đầu thiết kế',
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: _textSecondary,
-                            ),
-                          ),
-                        ],
-                      ),
-                    )
-                  else
-                    ListView.builder(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      itemCount: _rooms.length,
-                      itemBuilder: (context, index) {
-                        final room = _rooms[index];
-                        final roomName = room['RoomName'] ?? room['roomName'] ?? 'Phòng ${index + 1}';
-                        final roomType = room['RoomType'] ?? room['roomType'] ?? 'other';
-                        final width = room['Width'] ?? room['width'] ?? 0;
-                        final height = room['Height'] ?? room['height'] ?? 0;
-
-                        return Container(
-                          margin: const EdgeInsets.only(bottom: 12),
-                          decoration: BoxDecoration(
-                            color: _cardColor,
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: Colors.grey.shade200),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withOpacity(0.05),
-                                blurRadius: 8,
-                                offset: const Offset(0, 2),
-                              ),
-                            ],
-                          ),
-                          child: ListTile(
-                            contentPadding: const EdgeInsets.all(16),
-                            leading: Container(
-                              padding: const EdgeInsets.all(10),
-                              decoration: BoxDecoration(
-                                color: _primaryColor.withOpacity(0.1),
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: Icon(
-                                _getRoomIcon(roomType),
-                                color: _primaryColor,
-                              ),
-                            ),
-                            title: Text(
-                              roomName,
-                              style: const TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                                color: _textPrimary,
-                              ),
-                            ),
-                            subtitle: Text(
-                              '${width}m × ${height}m • ${_getRoomTypeLabel(roomType)}',
-                              style: const TextStyle(
-                                fontSize: 12,
-                                color: _textSecondary,
-                              ),
-                            ),
-                            trailing: PopupMenuButton(
-                              itemBuilder: (context) => [
-                                PopupMenuItem(
-                                  child: const Row(
-                                    children: [
-                                      Icon(Icons.edit, size: 20),
-                                      SizedBox(width: 8),
-                                      Text('Sửa'),
-                                    ],
-                                  ),
-                                  onTap: () => _handleSelectRoom(room),
-                                ),
-                                PopupMenuItem(
-                                  child: const Row(
-                                    children: [
-                                      Icon(Icons.delete, size: 20, color: Colors.red),
-                                      SizedBox(width: 8),
-                                      Text('Xóa', style: TextStyle(color: Colors.red)),
-                                    ],
-                                  ),
-                                  onTap: () => _handleDeleteRoom(room['_id'] ?? room['id'] ?? ''),
-                                ),
-                              ],
-                            ),
-                            onTap: () => _handleSelectRoom(room),
-                          ),
-                        );
-                      },
-                    ),
+                  _FeatureCard(
+                    icon: Icons.view_in_ar_outlined,
+                    iconColor: _primaryColor,
+                    title: 'Tạo khối phòng 3D',
+                    description:
+                        'Nhập W/D/H, chọn màu tường, chọn sàn và xem phòng trống dạng 3D.',
+                    buttonText: 'Tạo phòng',
+                    buttonColor: _primaryColor,
+                    onPressed: _openRoomLayout,
+                  ),
                 ],
               ),
             ),
           ],
         ),
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _handleCreateNewRoom,
-        backgroundColor: _accentColor,
-        icon: const Icon(Icons.add),
-        label: const Text('Tạo phòng mới'),
-      ),
     );
   }
+}
 
-  IconData _getRoomIcon(String roomType) {
-    switch (roomType.toLowerCase()) {
-      case 'bedroom':
-        return Icons.bed;
-      case 'living':
-        return Icons.weekend;
-      case 'kitchen':
-        return Icons.kitchen;
-      case 'bathroom':
-        return Icons.bathroom;
-      case 'office':
-        return Icons.work;
-      case 'dining':
-        return Icons.dinner_dining;
-      default:
-        return Icons.home;
-    }
-  }
+class _FeatureCard extends StatelessWidget {
+  const _FeatureCard({
+    required this.icon,
+    required this.iconColor,
+    required this.title,
+    required this.description,
+    required this.buttonText,
+    required this.buttonColor,
+    required this.onPressed,
+  });
 
-  String _getRoomTypeLabel(String roomType) {
-    switch (roomType.toLowerCase()) {
-      case 'bedroom':
-        return 'Phòng ngủ';
-      case 'living':
-        return 'Phòng khách';
-      case 'kitchen':
-        return 'Bếp';
-      case 'bathroom':
-        return 'Phòng tắm';
-      case 'office':
-        return 'Văn phòng';
-      case 'dining':
-        return 'Phòng ăn';
-      default:
-        return 'Khác';
-    }
+  final IconData icon;
+  final Color iconColor;
+  final String title;
+  final String description;
+  final String buttonText;
+  final Color buttonColor;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: _cardColor,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.grey.shade200),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          Icon(icon, size: 56, color: iconColor),
+          const SizedBox(height: 16),
+          Text(
+            title,
+            style: const TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+              color: _textPrimary,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            description,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              fontSize: 14,
+              color: _textSecondary,
+              height: 1.5,
+            ),
+          ),
+          const SizedBox(height: 20),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: onPressed,
+              icon: const Icon(Icons.arrow_forward),
+              label: Text(buttonText),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: buttonColor,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
