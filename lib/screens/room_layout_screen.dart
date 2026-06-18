@@ -4,6 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+import '../models/user_model.dart';
+import '../services/room_api_service.dart';
+
 const Color _primaryColor = Color(0xFF2563EB);
 const Color _accentColor = Color(0xFF3B82F6);
 const Color _backgroundColor = Color(0xFFF4F6F8);
@@ -12,7 +15,14 @@ const Color _textPrimary = Color(0xFF111827);
 const Color _textSecondary = Color(0xFF6B7280);
 
 class RoomLayoutScreen extends StatefulWidget {
-  const RoomLayoutScreen({super.key});
+  const RoomLayoutScreen({
+    super.key,
+    required this.user,
+    this.initialRoom,
+  });
+
+  final User user;
+  final Map<String, dynamic>? initialRoom;
 
   @override
   State<RoomLayoutScreen> createState() => _RoomLayoutScreenState();
@@ -20,6 +30,8 @@ class RoomLayoutScreen extends StatefulWidget {
 
 class _RoomLayoutScreenState extends State<RoomLayoutScreen> {
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
+  final RoomApiService _roomApiService = RoomApiService();
+  final TextEditingController _roomNameController = TextEditingController();
   final TextEditingController _widthController =
       TextEditingController(text: '5000');
   final TextEditingController _depthController =
@@ -29,6 +41,8 @@ class _RoomLayoutScreenState extends State<RoomLayoutScreen> {
 
   bool _roomCreated = false;
   bool _loadingScene = false;
+  bool _savingLayout = false;
+  String? _savedRoomId;
   WebViewController? _sceneController;
 
   static const List<_RoomObjectDefinition> _objects = [
@@ -72,7 +86,27 @@ class _RoomLayoutScreenState extends State<RoomLayoutScreen> {
   ];
 
   @override
+  void initState() {
+    super.initState();
+    final room = widget.initialRoom;
+    if (room != null) {
+      _savedRoomId = (room['_id'] ?? '').toString();
+      _roomNameController.text = (room['RoomName'] ?? 'Phòng 3D').toString();
+      _widthController.text =
+          ((double.tryParse('${room['Width']}') ?? 5) * 1000).round().toString();
+      _depthController.text =
+          ((double.tryParse('${room['Depth']}') ?? 3) * 1000).round().toString();
+      _heightController.text =
+          ((double.tryParse('${room['Height']}') ?? 2.7) * 1000).round().toString();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _createRoom(roomData: room, keepSavedRoomId: true);
+      });
+    }
+  }
+
+  @override
   void dispose() {
+    _roomNameController.dispose();
     _widthController.dispose();
     _depthController.dispose();
     _heightController.dispose();
@@ -98,7 +132,17 @@ class _RoomLayoutScreenState extends State<RoomLayoutScreen> {
     return null;
   }
 
-  Future<void> _createRoom() async {
+  String? _validateRequired(String? value) {
+    if ((value ?? '').trim().isEmpty) {
+      return 'Không được để trống';
+    }
+    return null;
+  }
+
+  Future<void> _createRoom({
+    Map<String, dynamic>? roomData,
+    bool keepSavedRoomId = false,
+  }) async {
     FocusScope.of(context).unfocus();
     if (!(_formKey.currentState?.validate() ?? false)) {
       return;
@@ -107,6 +151,9 @@ class _RoomLayoutScreenState extends State<RoomLayoutScreen> {
     setState(() {
       _loadingScene = true;
       _roomCreated = true;
+      if (!keepSavedRoomId) {
+        _savedRoomId = null;
+      }
     });
 
     final double widthM = _parseDimension(_widthController.text, 5000) / 1000;
@@ -124,6 +171,13 @@ class _RoomLayoutScreenState extends State<RoomLayoutScreen> {
         depthM: depthM,
         heightM: heightM,
         modelSources: modelSources,
+        savedObjects: roomData?['Objects'] is List
+            ? List<Map<String, dynamic>>.from(
+                (roomData!['Objects'] as List).whereType<Map>().map(
+                      (object) => Map<String, dynamic>.from(object),
+                    ),
+              )
+            : const [],
       ),
     );
 
@@ -150,10 +204,124 @@ class _RoomLayoutScreenState extends State<RoomLayoutScreen> {
     await _sceneController?.runJavaScript(command);
   }
 
+  Future<String?> _askRoomName() async {
+    String draftName = _roomNameController.text.trim();
+
+    final String? name = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Đặt tên phòng'),
+        content: TextFormField(
+          initialValue: draftName,
+          autofocus: true,
+          onChanged: (value) => draftName = value.trim(),
+          decoration: const InputDecoration(
+            labelText: 'Tên phòng',
+            hintText: 'Ví dụ: Phòng ngủ',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Hủy'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final value = draftName.trim();
+              if (value.isNotEmpty) {
+                Navigator.pop(context, value);
+              }
+            },
+            child: const Text('Lưu'),
+          ),
+        ],
+      ),
+    );
+
+    if (name != null && name.isNotEmpty) {
+      _roomNameController.text = name;
+    }
+    return name;
+  }
+
+  Future<void> _saveRoomLayout() async {
+    if (_sceneController == null || _savingLayout) {
+      return;
+    }
+    if (widget.user.id.isEmpty) {
+      _showMessage('Thiếu thông tin người dùng');
+      return;
+    }
+
+    final bool isCreatingRoom = _savedRoomId == null;
+    final String? roomName = isCreatingRoom
+        ? await _askRoomName()
+        : _roomNameController.text.trim();
+    if (roomName == null || roomName.isEmpty) {
+      return;
+    }
+
+    setState(() => _savingLayout = true);
+
+    try {
+      final Object? rawResult = await _sceneController!.runJavaScriptReturningResult(
+        'JSON.stringify(exportRoomLayout());',
+      );
+      final String encoded = rawResult.toString();
+      final String jsonText = encoded.startsWith('"')
+          ? jsonDecode(encoded) as String
+          : encoded;
+      final Map<String, dynamic> sceneData =
+          jsonDecode(jsonText) as Map<String, dynamic>;
+
+      final Map<String, dynamic> payload = {
+        'RoomName': roomName,
+        'Width': sceneData['Width'],
+        'Depth': sceneData['Depth'],
+        'Height': sceneData['Height'],
+        'RoomType': 'custom_3d',
+        'Unit': 'm',
+        'Objects': sceneData['Objects'] ?? [],
+      };
+      final Map<String, dynamic> response = isCreatingRoom
+          ? await _roomApiService.createRoom(userId: widget.user.id, payload: payload)
+          : await _roomApiService.updateRoom(
+              roomId: _savedRoomId!,
+              payload: payload,
+            );
+
+      final dynamic data = response['data'];
+      if (data is Map && data['_id'] != null) {
+        _savedRoomId = data['_id'].toString();
+      }
+
+      _showMessage(isCreatingRoom
+          ? 'Đã lưu phòng thành công'
+          : 'Đã cập nhật phòng thành công');
+    } catch (error) {
+      _showMessage('Lỗi lưu phòng: $error');
+    } finally {
+      if (mounted) {
+        setState(() => _savingLayout = false);
+      }
+    }
+  }
+
+  void _showMessage(String message) {
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
   void _resetRoom() {
     setState(() {
       _roomCreated = false;
       _loadingScene = false;
+      _savingLayout = false;
+      _savedRoomId = null;
       _sceneController = null;
     });
   }
@@ -167,6 +335,20 @@ class _RoomLayoutScreenState extends State<RoomLayoutScreen> {
         backgroundColor: Colors.white,
         foregroundColor: _textPrimary,
         elevation: 0.6,
+        actions: [
+          if (_roomCreated)
+            IconButton(
+              tooltip: 'Lưu phòng',
+              onPressed: _savingLayout ? null : _saveRoomLayout,
+              icon: _savingLayout
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.save_outlined),
+            ),
+        ],
       ),
       body: _roomCreated ? _buildSceneView() : _buildSetupView(),
     );
@@ -352,8 +534,17 @@ class _RoomLayoutScreenState extends State<RoomLayoutScreen> {
     required double depthM,
     required double heightM,
     required Map<String, String> modelSources,
+    List<Map<String, dynamic>> savedObjects = const [],
   }) {
     final String sourceJson = jsonEncode(modelSources);
+    final String savedObjectsJson = jsonEncode(savedObjects);
+    final String labelJson = jsonEncode({
+      for (final _RoomObjectDefinition object in _objects) object.id: object.label,
+    });
+    final String assetPathJson = jsonEncode({
+      for (final _RoomObjectDefinition object in _objects)
+        object.id: object.assetPath,
+    });
     return '''
 <!doctype html>
 <html>
@@ -372,6 +563,9 @@ class _RoomLayoutScreenState extends State<RoomLayoutScreen> {
 <script>
 const ROOM = { width: $widthM, depth: $depthM, height: $heightM };
 const MODEL_SOURCES = $sourceJson;
+const SAVED_OBJECTS = $savedObjectsJson;
+const OBJECT_LABELS = $labelJson;
+const OBJECT_ASSET_PATHS = $assetPathJson;
 const OBJECT_SIZE = {
   bed: 1.55, sofa: 1.25, chair: .7, table: 1.0, wardrobe: 1.15,
   refrigerator: 1.2, tv: .9, door: 1.9, window: 1.1, fan: .8,
@@ -419,6 +613,7 @@ function init() {
   addLights();
   addRoom();
   resetCamera();
+  loadSavedObjects();
 
   renderer.domElement.addEventListener('pointerdown', onPointerDown, false);
   renderer.domElement.addEventListener('pointermove', onPointerMove, false);
@@ -510,7 +705,7 @@ function createWoodTexture() {
   return new THREE.CanvasTexture(canvas);
 }
 
-function addModel(type) {
+function addModel(type, saved = null) {
   const source = MODEL_SOURCES[type];
   if (!source) return;
 
@@ -530,14 +725,31 @@ function addModel(type) {
 
     const root = new THREE.Group();
     root.userData.type = type;
+    root.userData.objectId = saved && saved.ObjectId ? saved.ObjectId : null;
     root.add(model);
-    root.position.set(0, 0, 0);
-    keepOnFloor(root);
-    keepObjectInsideRoom(root);
+    if (saved) {
+      root.position.set(Number(saved.PosX || 0), Number(saved.PosY || 0), Number(saved.PosZ || 0));
+      root.rotation.set(Number(saved.RotationX || 0), Number(saved.RotationY || 0), Number(saved.RotationZ || 0));
+      const savedScale = Number(saved.Scale || 1);
+      root.scale.set(savedScale, savedScale, savedScale);
+      keepObjectInsideRoom(root);
+    } else {
+      root.position.set(0, 0, 0);
+      keepOnFloor(root);
+      keepObjectInsideRoom(root);
+    }
 
     objects.push(root);
     scene.add(root);
     selectObject(root);
+  });
+}
+
+function loadSavedObjects() {
+  if (!Array.isArray(SAVED_OBJECTS) || !SAVED_OBJECTS.length) return;
+  SAVED_OBJECTS.forEach(saved => {
+    const type = saved.ClassName || saved.ObjectName;
+    if (type) addModel(type, saved);
   });
 }
 
@@ -684,6 +896,38 @@ function canMoveVertical(object) {
   return object && VERTICAL_TYPES.has(object.userData.type);
 }
 
+function exportRoomLayout() {
+  return {
+    Width: ROOM.width,
+    Depth: ROOM.depth,
+    Height: ROOM.height,
+    Objects: objects.map((object, index) => {
+      const type = object.userData.type || 'object';
+      const box = new THREE.Box3().setFromObject(object);
+      const size = new THREE.Vector3();
+      box.getSize(size);
+
+      return {
+        ObjectId: object.userData.objectId || (type + '_' + (index + 1)),
+        ObjectName: OBJECT_LABELS[type] || type,
+        ClassName: type,
+        AssetPath: OBJECT_ASSET_PATHS[type] || '',
+        PosX: Number(object.position.x.toFixed(4)),
+        PosY: Number(object.position.y.toFixed(4)),
+        PosZ: Number(object.position.z.toFixed(4)),
+        Width: Number(size.x.toFixed(4)),
+        Depth: Number(size.z.toFixed(4)),
+        Height: Number(size.y.toFixed(4)),
+        Scale: Number(object.scale.x.toFixed(4)),
+        RotationX: Number(object.rotation.x.toFixed(4)),
+        RotationY: Number(object.rotation.y.toFixed(4)),
+        RotationZ: Number(object.rotation.z.toFixed(4)),
+        IsFixed: true
+      };
+    })
+  };
+}
+
 function clampVertical(object) {
   const box = new THREE.Box3().setFromObject(object);
   if (box.min.y < 0) {
@@ -765,6 +1009,48 @@ class _DimensionField extends StatelessWidget {
       style: const TextStyle(
         color: _textPrimary,
         fontSize: 18,
+        fontWeight: FontWeight.w700,
+      ),
+    );
+  }
+}
+
+class _PlainTextField extends StatelessWidget {
+  const _PlainTextField({
+    required this.controller,
+    required this.label,
+    required this.validator,
+  });
+
+  final TextEditingController controller;
+  final String label;
+  final String? Function(String?) validator;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextFormField(
+      controller: controller,
+      validator: validator,
+      decoration: InputDecoration(
+        labelText: label,
+        filled: true,
+        fillColor: const Color(0xFFF9FAFB),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide: const BorderSide(color: _accentColor, width: 1.5),
+        ),
+      ),
+      style: const TextStyle(
+        color: _textPrimary,
+        fontSize: 16,
         fontWeight: FontWeight.w700,
       ),
     );

@@ -1,16 +1,54 @@
-/// Service phân tích vị trí vật thể, khoảng cách, và hướng dẫn di chuyển
+﻿/// Service phân tích vị trí vật thể, khoảng cách và hướng dẫn di chuyển.
 
-/// Chia màn hình thành 3 vùng: LEFT, CENTER, RIGHT
 enum ScreenZone { left, center, right }
 
-/// Phân loại khoảng cách
 enum DistanceLevel { far, medium, near }
 
 class GuidanceService {
+  static const double reliableDetectionThreshold = 0.4;
 
-  /// Phân tích vị trí vật thể trên màn hình camera
-  /// Input: centerX (0-screenWidth), screenWidth
-  /// Output: ScreenZone
+  static const List<String> modelClasses = [
+    'bed',
+    'sofa',
+    'chair',
+    'table',
+    'wardrobe',
+    'refrigerator',
+    'tv',
+    'door',
+    'window',
+    'fan',
+    'laptop',
+    'washing_machine',
+  ];
+
+  static const List<String> obstacleClasses = [
+    'bed',
+    'sofa',
+    'chair',
+    'table',
+    'wardrobe',
+    'refrigerator',
+    'door',
+    'fan',
+    'washing_machine',
+  ];
+
+  static const Map<String, String> vietnameseNames = {
+    'bed': 'giường',
+    'sofa': 'sofa',
+    'chair': 'ghế',
+    'table': 'bàn',
+    'wardrobe': 'tủ',
+    'refrigerator': 'tủ lạnh',
+    'tv': 'tivi',
+    'door': 'cửa',
+    'window': 'cửa sổ',
+    'fan': 'quạt',
+    'laptop': 'laptop',
+    'washing_machine': 'máy giặt',
+  };
+
   static ScreenZone analyzeHorizontalPosition(
     double centerX,
     double screenWidth,
@@ -26,8 +64,6 @@ class GuidanceService {
     }
   }
 
-  /// Ước lượng khoảng cách dựa trên diện tích bounding box
-  /// Nguyên lý: box càng lớn = vật càng gần
   static DistanceLevel estimateDistance(
     double boxWidth,
     double boxHeight,
@@ -38,7 +74,6 @@ class GuidanceService {
     final screenArea = screenWidth * screenHeight;
     final boxPercentage = (boxArea / screenArea) * 100;
 
-    // Phân loại dựa trên % diện tích màn hình
     if (boxPercentage > 25) {
       return DistanceLevel.near;
     } else if (boxPercentage > 10) {
@@ -48,7 +83,6 @@ class GuidanceService {
     }
   }
 
-  /// Chuyển ScreenZone thành text hướng dẫn
   static String getDirectionText(ScreenZone zone, String objectName) {
     switch (zone) {
       case ScreenZone.left:
@@ -57,12 +91,9 @@ class GuidanceService {
         return '$objectName phía bên phải';
       case ScreenZone.center:
         return '$objectName phía trước';
-      default:
-        return '$objectName phía trước';
     }
   }
 
-  /// Chuyển DistanceLevel thành text
   static String getDistanceText(DistanceLevel level) {
     switch (level) {
       case DistanceLevel.near:
@@ -71,13 +102,9 @@ class GuidanceService {
         return 'khoảng cách trung bình';
       case DistanceLevel.far:
         return 'khá xa';
-      default:
-        return 'khoảng cách trung bình';
     }
   }
 
-  /// Tạo hướng dẫn di chuyển hoàn chỉnh
-  /// Ví dụ: "Bàn phía bên phải, rất gần. Rẽ nhẹ sang phải."
   static String createMovementGuidance(
     String objectName,
     ScreenZone zone,
@@ -86,105 +113,85 @@ class GuidanceService {
     final directionText = getDirectionText(zone, objectName);
     final distanceText = getDistanceText(distance);
 
-    String movementCommand = '';
-
-    if (zone == ScreenZone.center) {
-      if (distance == DistanceLevel.near) {
-        movementCommand = 'Đi thẳng. Đã gần đến ${objectName}.';
-      } else if (distance == DistanceLevel.medium) {
-        movementCommand = 'Đi thẳng để đến ${objectName}.';
-      } else {
-        movementCommand = 'Đi thẳng.';
-      }
-    } else if (zone == ScreenZone.left) {
-      if (distance == DistanceLevel.near) {
-        movementCommand = 'Quay trái và đi. Đã gần đến ${objectName}.';
-      } else {
-        movementCommand = 'Rẽ sang trái.';
-      }
-    } else if (zone == ScreenZone.right) {
-      if (distance == DistanceLevel.near) {
-        movementCommand = 'Quay phải và đi. Đã gần đến ${objectName}.';
-      } else {
-        movementCommand = 'Rẽ sang phải.';
-      }
-    }
+    final movementCommand = switch ((zone, distance)) {
+      (ScreenZone.center, DistanceLevel.near) =>
+        'Đi thẳng thật chậm. Vật đã gần, hãy đưa tay ra phía trước để dò.',
+      (ScreenZone.center, DistanceLevel.medium) =>
+        'Đi thẳng từng bước nhỏ để đến gần vật.',
+      (ScreenZone.center, DistanceLevel.far) =>
+        'Giữ hướng hiện tại và đi thẳng chậm.',
+      (ScreenZone.left, DistanceLevel.near) =>
+        'Xoay nhẹ sang trái. Vật đã gần, chưa bước nhanh.',
+      (ScreenZone.left, _) => 'Xoay nhẹ sang trái để đưa vật vào giữa khung hình.',
+      (ScreenZone.right, DistanceLevel.near) =>
+        'Xoay nhẹ sang phải. Vật đã gần, chưa bước nhanh.',
+      (ScreenZone.right, _) => 'Xoay nhẹ sang phải để đưa vật vào giữa khung hình.',
+    };
 
     return '$directionText, $distanceText. $movementCommand';
   }
 
-  /// Phân tích vật cản nguy hiểm
-  /// Returns: list hướng dẫn tránh vật cản
   static String? analyzeObstacles(
     List<DetectedObject> allObjects,
     String? targetObject,
     double screenWidth,
   ) {
-    // Lọc vật cản nguy hiểm (stairs, person)
-    final dangers = allObjects
-        .where((obj) => ['stairs', 'person'].contains(obj.label))
+    final obstacles = allObjects
+        .where((obj) =>
+            obstacleClasses.contains(obj.label) &&
+            obj.label != targetObject &&
+            obj.confidence > reliableDetectionThreshold)
         .toList();
 
-    if (dangers.isEmpty) {
+    if (obstacles.isEmpty) {
       return null;
     }
 
-    final primary = dangers.first;
+    obstacles.sort((a, b) => b.confidence.compareTo(a.confidence));
+    final primary = obstacles.first;
     final zone = analyzeHorizontalPosition(primary.centerX, screenWidth);
+    final objectName = vietnameseNames[primary.label] ?? primary.label;
 
-    if (primary.label == 'stairs') {
-      switch (zone) {
-        case ScreenZone.center:
-          return 'Cảnh báo! Cầu thang phía trước, rất nguy hiểm.';
-        case ScreenZone.left:
-          return 'Cảnh báo! Cầu thang bên trái.';
-        case ScreenZone.right:
-          return 'Cảnh báo! Cầu thang bên phải.';
-      }
-    } else if (primary.label == 'person') {
-      switch (zone) {
-        case ScreenZone.center:
-          return 'Có người phía trước.';
-        case ScreenZone.left:
-          return 'Có người bên trái.';
-        case ScreenZone.right:
-          return 'Có người bên phải.';
-      }
+    switch (zone) {
+      case ScreenZone.center:
+        return 'Cảnh báo, phía trước có $objectName có thể cản đường. Hãy đi chậm và đưa tay ra phía trước để dò.';
+      case ScreenZone.left:
+        return 'Cảnh báo, bên trái có $objectName. Hãy giữ khoảng cách an toàn.';
+      case ScreenZone.right:
+        return 'Cảnh báo, bên phải có $objectName. Hãy giữ khoảng cách an toàn.';
     }
-
-    return null;
   }
 
-  /// Tìm hướng an toàn để tránh vật cản
   static ScreenZone? findSafeDirection(
     List<DetectedObject> allObjects,
     double screenWidth,
   ) {
-    // Kiểm tra 3 vùng, vùng nào không có vật cản nguy hiểm
-    final dangers = allObjects
+    final obstacles = allObjects
         .where((obj) =>
-            ['stairs', 'person', 'chair', 'table'].contains(obj.label) &&
-            obj.confidence > 0.7)
+            obstacleClasses.contains(obj.label) &&
+            obj.confidence > reliableDetectionThreshold)
         .toList();
 
-    if (dangers.isEmpty) {
-      return null; // Không có vật cản
+    if (obstacles.isEmpty) {
+      return null;
     }
 
-    final leftCount = dangers
-        .where((obj) => analyzeHorizontalPosition(obj.centerX, screenWidth) ==
+    final leftCount = obstacles
+        .where((obj) =>
+            analyzeHorizontalPosition(obj.centerX, screenWidth) ==
             ScreenZone.left)
         .length;
-    final centerCount = dangers
-        .where((obj) => analyzeHorizontalPosition(obj.centerX, screenWidth) ==
+    final centerCount = obstacles
+        .where((obj) =>
+            analyzeHorizontalPosition(obj.centerX, screenWidth) ==
             ScreenZone.center)
         .length;
-    final rightCount = dangers
-        .where((obj) => analyzeHorizontalPosition(obj.centerX, screenWidth) ==
+    final rightCount = obstacles
+        .where((obj) =>
+            analyzeHorizontalPosition(obj.centerX, screenWidth) ==
             ScreenZone.right)
         .length;
 
-    // Vùng nào có ít vật cản nhất
     if (leftCount <= centerCount && leftCount <= rightCount) {
       return ScreenZone.left;
     } else if (rightCount <= centerCount && rightCount <= leftCount) {
@@ -194,22 +201,18 @@ class GuidanceService {
     }
   }
 
-  /// Tạo hướng dẫn tránh vật cản
   static String createAvoidanceGuidance(ScreenZone safeDirection) {
     switch (safeDirection) {
       case ScreenZone.left:
-        return 'Rẽ sang trái để tránh vật cản.';
+        return 'Lối bên trái đang ít vật cản hơn. Hãy nghiêng nhẹ sang trái và đi chậm.';
       case ScreenZone.right:
-        return 'Rẽ sang phải để tránh vật cản.';
+        return 'Lối bên phải đang ít vật cản hơn. Hãy nghiêng nhẹ sang phải và đi chậm.';
       case ScreenZone.center:
-        return 'Đi thẳng, đường đã an toàn.';
-      default:
-        return 'Đi thẳng, đường đã an toàn.';
+        return 'Phía trước đang ít vật cản hơn. Hãy đi thẳng thật chậm.';
     }
   }
 }
 
-/// Model đại diện cho một vật thể được detect
 class DetectedObject {
   final String label;
   final double confidence;
@@ -227,10 +230,7 @@ class DetectedObject {
     required this.height,
   });
 
-  /// Tính tâm
   double get centerX => x + width / 2;
   double get centerY => y + height / 2;
-
-  /// Tính diện tích
   double get area => width * height;
 }

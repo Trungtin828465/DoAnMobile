@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:doan/models/user_model.dart';
 import 'package:doan/screens/room_layout_screen.dart';
 
 void main() {
@@ -12,7 +13,16 @@ void main() {
       tester.binding.window.clearDevicePixelRatioTestValue();
     });
 
-    await tester.pumpWidget(const MaterialApp(home: RoomLayoutScreen()));
+    final testUser = User(
+      id: 'test-user-id',
+      email: 'test@example.com',
+      fullName: 'Test User',
+      createdAt: DateTime(2026, 1, 1),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(home: RoomLayoutScreen(user: testUser)),
+    );
 
     expect(find.text('Phòng'), findsOneWidget);
     expect(find.text('Kích thước phòng'), findsOneWidget);
