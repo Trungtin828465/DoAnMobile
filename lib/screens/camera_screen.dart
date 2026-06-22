@@ -1,4 +1,6 @@
-﻿import 'dart:io';
+﻿import 'dart:async';
+import 'dart:io';
+import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:camera/camera.dart';
@@ -6,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
+import 'package:webview_flutter/webview_flutter.dart';
 import '../services/tts_api_service.dart';
 import '../services/tflite_detection_service.dart';
 import '../services/object_mapping_service.dart';
@@ -30,6 +33,11 @@ class CameraScreen extends StatefulWidget {
 enum _CameraTask { idle, listening, detecting, speaking }
 
 class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver {
+  static const EventChannel _hardwareKeyChannel =
+      EventChannel('com.example.doan/hardware_keys');
+  static const MethodChannel _audioFeedbackChannel =
+      MethodChannel('com.example.doan/audio_feedback');
+
   late CameraController _cameraController;
   late stt.SpeechToText _speechToText;
   late TTSApiService _ttsApi;
@@ -53,31 +61,128 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   bool _hasHandledCurrentSpeech = false;
   _CameraTask _activeTask = _CameraTask.idle;
   String? _targetObject;
+  String? _mapReferenceObject;
   String _lastGuidance = 'Ứng dụng đang lắng nghe...';
   String _recognizedText = '';
   String _lastSpeechCandidate = '';
   String _apiStatus = 'Chưa chụp ảnh';
+  String _mapPositionStatus = 'Chưa xác định vị trí. Hãy bấm mic để bắt đầu tìm vật.';
   String? _lastCapturedImagePath;
   String? _lastAnalyzedImagePath;
   Size? _lastImageSize;
   List<TFLiteDetectionResult> _lastDetections = [];
   TFLiteDetectionResult? _pendingTargetDetection;
   Map<String, dynamic>? _activeRoomLayout;
+  Offset? _estimatedUserPosition;
+  double _estimatedUserHeadingDegrees = 0;
+  WebViewController? _navigationSceneController;
+  final GlobalKey<ScaffoldState> _cameraScaffoldKey = GlobalKey<ScaffoldState>();
+  final ScrollController _activityLogController = ScrollController();
+  StreamSubscription<dynamic>? _hardwareKeySubscription;
+  bool _isNavigationSceneReady = false;
   int _navigationStepCount = 0;
   DateTime _lastSpeechTime = DateTime.now();
+  DateTime? _lastHardwareMicButtonTime;
   DateTime? _lastSpeechErrorTime;
   DateTime? _lastListenStartTime;
   DateTime? _speechBlockedUntil;
+  final List<String> _activityLogs = [];
   static const int _speechCooldownMs = 2000;
   static const int _maxNavigationSteps = 8;
   static const double _visualConfirmThreshold = 0.4;
   static const double _layoutReferenceThreshold = 0.4;
+  static const Map<String, String> _navigationModelAssets = {
+    'bed': 'assets/model/bed.glb',
+    'sofa': 'assets/model/sofa.glb',
+    'chair': 'assets/model/chair.glb',
+    'table': 'assets/model/table.glb',
+    'wardrobe': 'assets/model/wardrobe.glb',
+    'refrigerator': 'assets/model/refrigerator.glb',
+    'tv': 'assets/model/tv.glb',
+    'door': 'assets/model/door.glb',
+    'window': 'assets/model/window.glb',
+    'fan': 'assets/model/fan.glb',
+    'laptop': 'assets/model/laptop.glb',
+    'washing_machine': 'assets/model/washing_machine.glb',
+  };
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _initializeHardwareButtonListener();
     _initializeServices();
+  }
+
+  void _initializeHardwareButtonListener() {
+    _hardwareKeySubscription = _hardwareKeyChannel.receiveBroadcastStream().listen(
+      (event) {
+        final key = event?.toString() ?? '';
+        if (key != 'volume_up' && key != 'volume_down' && key != 'camera') {
+          return;
+        }
+
+        print('🎛️ Nút Bluetooth: nhận phím $key, chuyển thành nút mic');
+        _handleHardwareMicButton();
+      },
+      onError: (error) {
+        print('⚠️ Nút Bluetooth: lỗi lắng nghe phím cứng: $error');
+      },
+    );
+  }
+
+  void _handleHardwareMicButton() {
+    final now = DateTime.now();
+    if (_lastHardwareMicButtonTime != null &&
+        now.difference(_lastHardwareMicButtonTime!).inMilliseconds < 700) {
+      print('⚠️ Nút Bluetooth: bỏ qua do bấm quá nhanh');
+      return;
+    }
+
+    _lastHardwareMicButtonTime = now;
+    _startListening();
+  }
+
+  void _addActivityLog(String actor, String message) {
+    final cleanedMessage = message.trim();
+    if (cleanedMessage.isEmpty) return;
+
+    final line = '$actor: $cleanedMessage';
+    if (!mounted) {
+      _activityLogs.add(line);
+      return;
+    }
+
+    setState(() {
+      _activityLogs.add(line);
+      if (_activityLogs.length > 120) {
+        _activityLogs.removeRange(0, _activityLogs.length - 120);
+      }
+    });
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (!_activityLogController.hasClients) return;
+      _activityLogController.animateTo(
+        _activityLogController.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 250),
+        curve: Curves.easeOut,
+      );
+    });
+  }
+
+  String _createDetectionLog(List<TFLiteDetectionResult> detections) {
+    if (detections.isEmpty) {
+      return 'Không phát hiện vật nào trong ảnh.';
+    }
+
+    return detections
+        .map((detection) {
+          final name = ObjectMappingService.getVietnameseName(detection.label);
+          final confidence = (detection.confidence * 100).toStringAsFixed(0);
+          return '$name $confidence%';
+        })
+        .join(', ');
   }
 
   Future<void> _initializeServices() async {
@@ -108,6 +213,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       print('✅ Đã khởi tạo TTS API Service');
 
       await _loadActiveRoomLayout();
+      await _initializeNavigationScene();
 
       _detectionService = TFLiteDetectionService();
       _confirmationIntentService = ConfirmationIntentService();
@@ -123,6 +229,10 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       print('=== Khởi tạo màn hình camera thành công ===');
 
       if (mounted) {
+        _addActivityLog(
+          'Hệ thống',
+          'Ứng dụng hỗ trợ người di chuyển đang hoạt động. Hãy bấm mic để bắt đầu nói.',
+        );
         _speak(
           'Ứng dụng Hỗ trợ di chuyển đã sẵn sàng. Hãy bấm mic để bắt đầu nói.',
           restartListening: false,
@@ -195,6 +305,399 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       print('⚠️ Layout: lỗi đọc layout đã chọn: $error');
     }
   }
+
+  Future<void> _initializeNavigationScene() async {
+    if (_activeRoomLayout == null) return;
+
+    try {
+      print('🧭 Layout 3D: đang dựng scene demo điều hướng');
+      final modelSources = await _loadNavigationModelSources();
+      final controller = WebViewController()
+        ..setJavaScriptMode(JavaScriptMode.unrestricted)
+        ..setBackgroundColor(const Color(0xFFD7D7D7))
+        ..setNavigationDelegate(
+          NavigationDelegate(
+            onPageFinished: (_) {
+              _isNavigationSceneReady = true;
+              _syncTargetMarkerToScene();
+              _syncUserMarkerToScene();
+              if (mounted) setState(() {});
+              print('✅ Layout 3D: đã render scene điều hướng');
+            },
+          ),
+        );
+
+      _navigationSceneController = controller;
+      if (mounted) setState(() {});
+
+      await controller.loadHtmlString(
+        _buildNavigationSceneHtml(
+          widthM: _roomWidthMeters,
+          depthM: _roomDepthMeters,
+          heightM: _readRoomDouble('Height', 2.7),
+          modelSources: modelSources,
+          savedObjects: _layoutObjects,
+        ),
+      );
+    } catch (error) {
+      print('⚠️ Layout 3D: lỗi dựng scene điều hướng: $error');
+    }
+  }
+
+  Future<Map<String, String>> _loadNavigationModelSources() async {
+    final sources = <String, String>{};
+    for (final entry in _navigationModelAssets.entries) {
+      try {
+        final data = await rootBundle.load(entry.value);
+        sources[entry.key] =
+            'data:model/gltf-binary;base64,${base64Encode(data.buffer.asUint8List())}';
+      } catch (error) {
+        print('⚠️ Layout 3D: không load được model ${entry.key}: $error');
+      }
+    }
+    return sources;
+  }
+
+  void _syncUserMarkerToScene() {
+    final position = _estimatedUserPosition;
+    final controller = _navigationSceneController;
+    if (!_isNavigationSceneReady || position == null || controller == null) {
+      return;
+    }
+
+    final label = jsonEncode(_mapPositionStatus);
+    controller.runJavaScript(
+      'window.updateUserMarker(${position.dx}, ${position.dy}, '
+      '$_estimatedUserHeadingDegrees, $label);',
+    );
+  }
+
+  void _syncTargetMarkerToScene() {
+    final controller = _navigationSceneController;
+    if (!_isNavigationSceneReady || controller == null) return;
+
+    controller.runJavaScript(
+      'window.setTargetObject(${jsonEncode(_targetObject)});',
+    );
+  }
+
+  String _buildNavigationSceneHtml({
+    required double widthM,
+    required double depthM,
+    required double heightM,
+    required Map<String, String> modelSources,
+    required List<Map<String, dynamic>> savedObjects,
+  }) {
+    final sourceJson = jsonEncode(modelSources);
+    final savedObjectsJson = jsonEncode(savedObjects);
+    return '''
+<!doctype html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <style>
+    html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #d7d7d7; }
+    canvas { touch-action: none; }
+    .badge {
+      position: fixed; left: 12px; top: 12px; z-index: 2;
+      background: rgba(255,255,255,.88); color: #0f172a;
+      padding: 8px 10px; border-radius: 14px;
+      font-family: Arial, sans-serif; font-size: 12px; font-weight: 700;
+      box-shadow: 0 8px 22px rgba(0,0,0,.12);
+    }
+  </style>
+</head>
+<body>
+<div class="badge" id="status">Layout 3D điều hướng</div>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<script>
+const ROOM = { width: $widthM, depth: $depthM, height: $heightM };
+const MODEL_SOURCES = $sourceJson;
+const SAVED_OBJECTS = $savedObjectsJson;
+const OBJECT_SIZE = {
+  bed: 1.55, sofa: 1.25, chair: .7, table: 1.0, wardrobe: 1.15,
+  refrigerator: 1.2, tv: .9, door: 1.9, window: 1.1, fan: .8,
+  laptop: .45, washing_machine: .85
+};
+
+let scene, camera, renderer, orbitControls, loader;
+let userMarker, userArrow, targetMarker;
+let pendingTargetType = null;
+const objects = [];
+
+init();
+animate();
+
+function init() {
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0xd7d7d7);
+
+  camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.01, 100);
+  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+  renderer.setPixelRatio(window.devicePixelRatio || 1);
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  document.body.appendChild(renderer.domElement);
+
+  orbitControls = new THREE.OrbitControls(camera, renderer.domElement);
+  orbitControls.enableDamping = true;
+  orbitControls.dampingFactor = .08;
+  orbitControls.minDistance = Math.max(ROOM.width, ROOM.depth) * .55;
+  orbitControls.maxDistance = Math.max(ROOM.width, ROOM.depth) * 3.2;
+  orbitControls.maxPolarAngle = Math.PI * .48;
+
+  loader = new THREE.GLTFLoader();
+  addLights();
+  addRoom();
+  createMarkers();
+  resetCamera();
+  loadSavedObjects();
+  window.addEventListener('resize', onResize);
+}
+
+function addLights() {
+  scene.add(new THREE.HemisphereLight(0xffffff, 0xb8b8b8, 1.25));
+  const light = new THREE.DirectionalLight(0xffffff, 1.05);
+  light.position.set(3, 6, 4);
+  scene.add(light);
+}
+
+function addRoom() {
+  const floorTexture = createWoodTexture();
+  floorTexture.wrapS = THREE.RepeatWrapping;
+  floorTexture.wrapT = THREE.RepeatWrapping;
+  floorTexture.repeat.set(Math.max(2, ROOM.width), Math.max(2, ROOM.depth));
+
+  const floor = new THREE.Mesh(
+    new THREE.PlaneGeometry(ROOM.width, ROOM.depth),
+    new THREE.MeshStandardMaterial({ map: floorTexture, roughness: .86 })
+  );
+  floor.rotation.x = -Math.PI / 2;
+  floor.name = 'floor';
+  scene.add(floor);
+
+  const wallMaterial = new THREE.MeshStandardMaterial({
+    color: 0xdde7ea, roughness: .9, transparent: true,
+    opacity: .24, side: THREE.DoubleSide
+  });
+
+  const back = new THREE.Mesh(new THREE.PlaneGeometry(ROOM.width, ROOM.height), wallMaterial);
+  back.position.set(0, ROOM.height / 2, -ROOM.depth / 2);
+  scene.add(back);
+
+  const left = new THREE.Mesh(new THREE.PlaneGeometry(ROOM.depth, ROOM.height), wallMaterial);
+  left.position.set(-ROOM.width / 2, ROOM.height / 2, 0);
+  left.rotation.y = Math.PI / 2;
+  scene.add(left);
+
+  const right = new THREE.Mesh(new THREE.PlaneGeometry(ROOM.depth, ROOM.height), wallMaterial);
+  right.position.set(ROOM.width / 2, ROOM.height / 2, 0);
+  right.rotation.y = -Math.PI / 2;
+  scene.add(right);
+
+  const edges = new THREE.LineSegments(
+    new THREE.EdgesGeometry(new THREE.BoxGeometry(ROOM.width, ROOM.height, ROOM.depth)),
+    new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: .86 })
+  );
+  edges.position.y = ROOM.height / 2;
+  scene.add(edges);
+}
+
+function createWoodTexture() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 512;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#d6a85d';
+  ctx.fillRect(0, 0, 512, 512);
+  ctx.strokeStyle = 'rgba(104,67,28,.34)';
+  ctx.lineWidth = 2;
+  for (let y = 0; y < 512; y += 42) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(512, y + 12);
+    ctx.stroke();
+  }
+  for (let x = 0; x < 512; x += 70) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x + 18, 512);
+    ctx.stroke();
+  }
+  ctx.strokeStyle = 'rgba(255,231,178,.30)';
+  for (let y = 15; y < 512; y += 38) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.bezierCurveTo(150, y + 22, 330, y - 22, 512, y + 8);
+    ctx.stroke();
+  }
+  return new THREE.CanvasTexture(canvas);
+}
+
+function loadSavedObjects() {
+  if (!Array.isArray(SAVED_OBJECTS)) return;
+  SAVED_OBJECTS.forEach(saved => {
+    const type = saved.ClassName || saved.ObjectName;
+    if (type) addModel(type, saved);
+  });
+}
+
+function addModel(type, saved) {
+  const source = MODEL_SOURCES[type];
+  if (!source) return;
+
+  loader.load(source, gltf => {
+    const model = gltf.scene;
+    model.userData.type = type;
+    model.traverse(child => {
+      if (child.isMesh) {
+        child.castShadow = true;
+        child.receiveShadow = true;
+        if (child.material) child.material.side = THREE.DoubleSide;
+      }
+    });
+    normalizeModel(model, OBJECT_SIZE[type] || 1);
+    centerModelGeometry(model);
+
+    const root = new THREE.Group();
+    root.userData.type = type;
+    root.add(model);
+    root.position.set(Number(saved.PosX || 0), Number(saved.PosY || 0), Number(saved.PosZ || 0));
+    root.rotation.set(Number(saved.RotationX || 0), Number(saved.RotationY || 0), Number(saved.RotationZ || 0));
+    const savedScale = Number(saved.Scale || 1);
+    root.scale.set(savedScale, savedScale, savedScale);
+    keepObjectInsideRoom(root);
+    objects.push(root);
+    scene.add(root);
+    if (pendingTargetType) setTargetObject(pendingTargetType);
+  });
+}
+
+function normalizeModel(model, targetSize) {
+  const box = new THREE.Box3().setFromObject(model);
+  const size = new THREE.Vector3();
+  box.getSize(size);
+  const maxSide = Math.max(size.x, size.y, size.z) || 1;
+  model.scale.multiplyScalar(targetSize / maxSide);
+}
+
+function centerModelGeometry(model) {
+  const box = new THREE.Box3().setFromObject(model);
+  const center = new THREE.Vector3();
+  box.getCenter(center);
+  model.position.x -= center.x;
+  model.position.z -= center.z;
+  model.position.y -= box.min.y;
+}
+
+function keepObjectInsideRoom(object) {
+  const halfW = ROOM.width / 2;
+  const halfD = ROOM.depth / 2;
+  const box = new THREE.Box3().setFromObject(object);
+  if (box.min.x < -halfW) object.position.x += -halfW - box.min.x;
+  if (box.max.x > halfW) object.position.x -= box.max.x - halfW;
+  if (box.min.z < -halfD) object.position.z += -halfD - box.min.z;
+  if (box.max.z > halfD) object.position.z -= box.max.z - halfD;
+  const refreshed = new THREE.Box3().setFromObject(object);
+  object.position.y -= refreshed.min.y;
+}
+
+function createMarkers() {
+  userMarker = new THREE.Group();
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(.18, .28, 48),
+    new THREE.MeshBasicMaterial({ color: 0x2563eb, side: THREE.DoubleSide, transparent: true, opacity: .92 })
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = .035;
+  userMarker.add(ring);
+
+  const dot = new THREE.Mesh(
+    new THREE.SphereGeometry(.13, 32, 16),
+    new THREE.MeshStandardMaterial({ color: 0x1d4ed8, roughness: .35 })
+  );
+  dot.position.y = .18;
+  userMarker.add(dot);
+
+  userArrow = new THREE.ArrowHelper(
+    new THREE.Vector3(0, 0, 1),
+    new THREE.Vector3(0, .16, 0),
+    .75,
+    0x1d4ed8,
+    .22,
+    .12
+  );
+  userMarker.add(userArrow);
+  userMarker.visible = false;
+  scene.add(userMarker);
+
+  targetMarker = new THREE.Mesh(
+    new THREE.RingGeometry(.38, .48, 56),
+    new THREE.MeshBasicMaterial({ color: 0x22c55e, side: THREE.DoubleSide, transparent: true, opacity: .95 })
+  );
+  targetMarker.rotation.x = -Math.PI / 2;
+  targetMarker.position.y = .05;
+  targetMarker.visible = false;
+  scene.add(targetMarker);
+}
+
+function updateUserMarker(x, z, headingDegrees, label) {
+  if (!userMarker) return;
+  userMarker.position.set(Number(x || 0), 0, Number(z || 0));
+  const radians = THREE.MathUtils.degToRad(Number(headingDegrees || 0));
+  const direction = new THREE.Vector3(Math.sin(radians), 0, Math.cos(radians)).normalize();
+  userArrow.setDirection(direction);
+  userMarker.visible = true;
+  const status = document.getElementById('status');
+  if (status) status.textContent = label || 'Đã định vị người dùng';
+}
+
+function setTargetObject(type) {
+  pendingTargetType = type;
+  if (!targetMarker || !type) {
+    if (targetMarker) targetMarker.visible = false;
+    return;
+  }
+  const target = objects.find(object => object.userData.type === type);
+  if (!target) {
+    targetMarker.visible = false;
+    return;
+  }
+  targetMarker.position.x = target.position.x;
+  targetMarker.position.z = target.position.z;
+  targetMarker.visible = true;
+}
+
+function resetCamera() {
+  const maxSide = Math.max(ROOM.width, ROOM.depth);
+  camera.position.set(ROOM.width * .05, maxSide * 1.55, ROOM.depth * .48);
+  orbitControls.target.set(0, 0, 0);
+  orbitControls.update();
+}
+
+function onResize() {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  orbitControls.update();
+  renderer.render(scene, camera);
+}
+
+window.updateUserMarker = updateUserMarker;
+window.setTargetObject = setTargetObject;
+window.resetNavigationCamera = resetCamera;
+</script>
+</body>
+</html>
+''';
+  }
+
   List<Map<String, dynamic>> get _layoutObjects {
     final objects = _activeRoomLayout?['Objects'];
     if (objects is! List) return [];
@@ -211,6 +714,141 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       }
     }
     return null;
+  }
+
+  String _objectDisplayName(String label) {
+    switch (label) {
+      case 'bed':
+        return 'Giường';
+      case 'sofa':
+        return 'Sofa';
+      case 'chair':
+        return 'Ghế';
+      case 'table':
+        return 'Bàn';
+      case 'wardrobe':
+        return 'Tủ';
+      case 'refrigerator':
+        return 'Tủ lạnh';
+      case 'tv':
+        return 'TV';
+      case 'door':
+        return 'Cửa';
+      case 'window':
+        return 'Cửa sổ';
+      case 'fan':
+        return 'Quạt';
+      case 'laptop':
+        return 'Laptop';
+      case 'washing_machine':
+        return 'Máy giặt';
+      default:
+        return label;
+    }
+  }
+
+  double _readRoomDouble(String key, double fallback) {
+    final value = _activeRoomLayout?[key];
+    if (value is num) return value.toDouble();
+    return double.tryParse(value?.toString() ?? '') ?? fallback;
+  }
+
+  double get _roomWidthMeters => _readRoomDouble('Width', 5);
+  double get _roomDepthMeters => _readRoomDouble('Depth', 3);
+
+  TFLiteDetectionResult? _bestLayoutDetection(
+    List<TFLiteDetectionResult> detections,
+  ) {
+    TFLiteDetectionResult? best;
+    for (final detection in detections) {
+      if (detection.confidence < _layoutReferenceThreshold) continue;
+      if (_findLayoutObject(detection.label) == null) continue;
+      if (best == null || detection.confidence > best.confidence) {
+        best = detection;
+      }
+    }
+    return best;
+  }
+
+  double _estimateUserDistanceFromObject(TFLiteDetectionResult detection) {
+    final sourceSize = _lastImageSize ?? MediaQuery.of(context).size;
+    final distance = GuidanceService.estimateDistance(
+      detection.width,
+      detection.height,
+      sourceSize.width,
+      sourceSize.height,
+    );
+
+    return switch (distance) {
+      DistanceLevel.near => 0.8,
+      DistanceLevel.medium => 1.5,
+      DistanceLevel.far => 2.4,
+    };
+  }
+
+  Offset _clampPointInsideRoom(Offset point) {
+    final halfWidth = _roomWidthMeters / 2;
+    final halfDepth = _roomDepthMeters / 2;
+    const margin = 0.2;
+    return Offset(
+      point.dx.clamp(-halfWidth + margin, halfWidth - margin).toDouble(),
+      point.dy.clamp(-halfDepth + margin, halfDepth - margin).toDouble(),
+    );
+  }
+
+  void _updateEstimatedUserPosition(TFLiteDetectionResult detection) {
+    if (_activeRoomLayout == null) return;
+
+    final layoutObject = _findLayoutObject(detection.label);
+    if (layoutObject == null) return;
+
+    final objectPosition = Offset(
+      _readDouble(layoutObject, 'PosX'),
+      _readDouble(layoutObject, 'PosZ'),
+    );
+    var objectToUser = Offset.zero - objectPosition;
+    if (objectToUser.distance < 0.05) {
+      objectToUser = const Offset(0, 1);
+    }
+
+    final direction = objectToUser / objectToUser.distance;
+    final sourceSize = _lastImageSize ?? MediaQuery.of(context).size;
+    final zone = GuidanceService.analyzeHorizontalPosition(
+      detection.centerX,
+      sourceSize.width,
+    );
+    final lateralAdjust = switch (zone) {
+      ScreenZone.left => 0.35,
+      ScreenZone.center => 0.0,
+      ScreenZone.right => -0.35,
+    };
+    final perpendicular = Offset(-direction.dy, direction.dx);
+    final distance = _estimateUserDistanceFromObject(detection);
+    final userPosition = _clampPointInsideRoom(
+      objectPosition + direction * distance + perpendicular * lateralAdjust,
+    );
+    final userToObject = objectPosition - userPosition;
+    final heading = math.atan2(userToObject.dx, userToObject.dy) * 180 / math.pi;
+    final objectName = _objectDisplayName(detection.label);
+    final percent = (detection.confidence * 100).toStringAsFixed(0);
+
+    print(
+      '🗺️ Layout map: ước lượng vị trí người dùng từ $objectName ($percent%) '
+      '=> x=${userPosition.dx.toStringAsFixed(2)}, z=${userPosition.dy.toStringAsFixed(2)}',
+    );
+
+    if (!mounted) return;
+    setState(() {
+      _estimatedUserPosition = userPosition;
+      _estimatedUserHeadingDegrees = heading;
+      _mapReferenceObject = detection.label;
+      _mapPositionStatus = 'Vị trí ước lượng từ $objectName';
+    });
+    _addActivityLog(
+      'Layout',
+      'Cập nhật vị trí người dùng theo mốc $objectName ($percent%).',
+    );
+    _syncUserMarkerToScene();
   }
 
   String _handleObjectFound(TFLiteDetectionResult detection) {
@@ -297,9 +935,9 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
     final stepText = switch ((zone, distance)) {
       (ScreenZone.left, _) =>
-        'Chặng này chỉ xoay người và điện thoại sang trái khoảng 15 độ. Chưa cần bước tới.',
+        'Chặng này chỉ xoay người và điện thoại sang trái khoảng 45 độ. Chưa cần bước tới.',
       (ScreenZone.right, _) =>
-        'Chặng này chỉ xoay người và điện thoại sang phải khoảng 15 độ. Chưa cần bước tới.',
+        'Chặng này chỉ xoay người và điện thoại sang phải khoảng 45 độ. Chưa cần bước tới.',
       (ScreenZone.center, DistanceLevel.far) =>
         'Chặng này đi thẳng ba bước nhỏ. Mỗi bước thật chậm, giữ tay phía trước để dò đường.',
       (ScreenZone.center, DistanceLevel.medium) =>
@@ -380,8 +1018,8 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
     final stepText = dx.abs() >= 0.55
         ? dx < 0
-            ? 'Chặng này hãy xoay người nhẹ sang trái khoảng 15 độ, chưa cần bước nhanh.'
-            : 'Chặng này hãy xoay người nhẹ sang phải khoảng 15 độ, chưa cần bước nhanh.'
+            ? 'Chặng này hãy xoay người nhẹ sang trái khoảng 45 độ, chưa cần bước nhanh.'
+            : 'Chặng này hãy xoay người nhẹ sang phải khoảng 45 độ, chưa cần bước nhanh.'
         : distance > 2.5
             ? 'Chặng này đi thẳng ba bước nhỏ, mỗi bước thật chậm.'
             : distance > 1.2
@@ -466,15 +1104,17 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   }
 
   int _roundToStepAngle(double angle) {
-    final rounded = (angle.abs() / 15).round() * 15;
-    return rounded.clamp(15, 180).toInt();
+    final absoluteAngle = angle.abs();
+    if (absoluteAngle < 68) return 45;
+    if (absoluteAngle < 135) return 90;
+    return 180;
   }
 
   String _createDefaultScanGuidance() {
     final objectName = _targetObject == null
         ? 'vật cần tìm'
         : ObjectMappingService.getVietnameseName(_targetObject!);
-    return 'Chưa phát hiện rõ $objectName trong ảnh. Vui lòng xoay người và điện thoại sang phải 15 độ thật chậm, rồi đứng yên 5 giây để tôi chụp lại.';
+    return 'Chưa phát hiện rõ $objectName trong ảnh. Vui lòng xoay người và điện thoại sang phải 45 độ thật chậm, rồi đứng yên 3 giây để tôi chụp lại.';
   }
 
   String _createLayoutScanGuidance(TFLiteDetectionResult reference) {
@@ -493,7 +1133,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
     if (target == null || seenObject == null) {
       print('⚠️ Layout: thiếu tọa độ $seenName hoặc $targetName trong phòng');
-      return 'Tôi thấy $seenName. Hãy xoay phải 15 độ thật chậm, rồi đứng yên 5 giây để tôi chụp lại.';
+      return 'Tôi thấy $seenName. Hãy xoay phải 45 độ thật chậm, rồi đứng yên 3 giây để tôi chụp lại.';
     }
 
     final targetX = _readDouble(target, 'PosX');
@@ -511,15 +1151,15 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     );
 
     if (deltaDegrees.abs() < 20) {
-      return 'Tôi thấy $seenName. Dựa vào layout, hãy giữ hướng hiện tại, nghiêng điện thoại nhẹ sang trái rồi sang phải, sau đó đứng yên 5 giây để tôi chụp lại.';
+      return 'Tôi thấy $seenName. Dựa vào layout, hãy giữ hướng hiện tại, nghiêng điện thoại nhẹ sang trái rồi sang phải, sau đó đứng yên 3 giây để tôi chụp lại.';
     }
 
     if (deltaDegrees.abs() >= 150) {
-      return 'Tôi thấy $seenName. Dựa vào layout, hãy quay người 180 độ thật chậm, rồi đứng yên 5 giây để tôi chụp lại.';
+      return 'Tôi thấy $seenName. Dựa vào layout, hãy quay người 180 độ thật chậm, rồi đứng yên 3 giây để tôi chụp lại.';
     }
 
     final direction = deltaDegrees < 0 ? 'trái' : 'phải';
-    return 'Tôi thấy $seenName. Dựa vào layout, hãy xoay người và điện thoại sang $direction khoảng $roundedAngle độ thật chậm, rồi đứng yên 5 giây để tôi chụp lại.';
+    return 'Tôi thấy $seenName. Dựa vào layout, hãy xoay người và điện thoại sang $direction khoảng $roundedAngle độ thật chậm, rồi đứng yên 3 giây để tôi chụp lại.';
   }
 
   Future<TFLiteDetectionResult?> _captureAndAnalyzeImage() async {
@@ -558,8 +1198,10 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
     try {
       print('📷 Camera: bắt đầu chụp ảnh');
+      _addActivityLog('Camera', 'Bắt đầu chụp ảnh.');
       final image = await _cameraController.takePicture();
       print('✅ Camera: đã chụp ảnh tại ${image.path}');
+      _addActivityLog('Camera', 'Đã chụp ảnh, đang phân tích vật thể.');
 
       if (mounted) {
         setState(() {
@@ -584,6 +1226,14 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
         _lastDetections = result.detections;
         _apiStatus = 'Detect local xong: ${result.count} vật thể';
       });
+      _addActivityLog('Detect', _createDetectionLog(result.detections));
+
+      final mapReference = _bestLayoutDetection(result.detections);
+      if (mapReference != null) {
+        _updateEstimatedUserPosition(mapReference);
+      } else {
+        print('🗺️ Layout map: chưa có vật detect đủ tin cậy để định vị');
+      }
 
       if (_targetObject != null && result.detections.isNotEmpty) {
         TFLiteDetectionResult? found;
@@ -609,6 +1259,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       return null;
     } catch (e) {
       print('❌ Detect local: lỗi khi chụp hoặc phân tích ảnh: $e');
+      _addActivityLog('Detect', 'Lỗi khi chụp hoặc phân tích ảnh: $e');
       if (mounted) {
         setState(() => _apiStatus = 'Lỗi khi phân tích ảnh: $e');
         ScaffoldMessenger.of(context).showSnackBar(
@@ -707,7 +1358,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
         setState(() => _lastGuidance = scanGuidance);
       }
       await _speak(scanGuidance, restartListening: false);
-      await Future.delayed(const Duration(seconds: 5));
+      await Future.delayed(const Duration(seconds: 3));
       await _captureAndContinueNavigation();
       return;
     }
@@ -734,6 +1385,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
               '$objectName đã ở rất gần. Hãy đưa tay lại gần phía trước để tìm vật.';
           _recognizedText = 'Đã thoát trạng thái tìm vật';
         });
+        _syncTargetMarkerToScene();
       }
       await _speak(
         'Tôi đã thấy $objectName ở rất gần. Hãy dừng lại, đưa tay lại gần phía trước để tìm vật. Tôi sẽ thoát trạng thái tìm vật. Nếu cần tìm vật khác, hãy bật mic để tôi hỗ trợ.',
@@ -840,6 +1492,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     _activeTask = _CameraTask.speaking;
     _lastSpeechTime = DateTime.now();
     print('🔊 TTS: bắt đầu đọc "$text"');
+    _addActivityLog('Hệ thống', text);
     try {
       await _ttsApi.speak(text, lang: 'vi');
       print('✅ TTS: đã gửi yêu cầu đọc thành công');
@@ -1061,6 +1714,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
 
     _hasHandledCurrentSpeech = true;
+    _addActivityLog('Người', normalizedCommand);
     if (_awaitingReadyForMovement) {
       await _handleReadyForMovement(normalizedCommand);
       return;
@@ -1102,19 +1756,34 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
     if (_isListening) {
       _playMicTapFeedback(isStarting: false);
+      _addActivityLog('Mic', 'Đã tắt mic.');
       _stopListening();
     } else {
       _playMicTapFeedback(isStarting: true);
+      _addActivityLog('Mic', 'Đã bật mic, hãy nói vào micro.');
       _startContinuousListening();
     }
   }
 
   void _playMicTapFeedback({required bool isStarting}) {
-    SystemSound.play(isStarting ? SystemSoundType.click : SystemSoundType.alert);
+    unawaited(_playMicTone(isStarting: isStarting));
     if (isStarting) {
       HapticFeedback.lightImpact();
     } else {
       HapticFeedback.selectionClick();
+    }
+  }
+
+  Future<void> _playMicTone({required bool isStarting}) async {
+    try {
+      await _audioFeedbackChannel.invokeMethod<void>(
+        'playMicTone',
+        {'isStarting': isStarting},
+      );
+    } catch (_) {
+      SystemSound.play(
+        isStarting ? SystemSoundType.click : SystemSoundType.alert,
+      );
     }
   }
 
@@ -1181,6 +1850,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       final name = ObjectMappingService.getVietnameseName(label);
       print('✅ STT: đã chọn mục tiêu cần tìm = $name');
       setState(() => _targetObject = label);
+      _syncTargetMarkerToScene();
       await _speak(
         'Tôi đã hiểu. Bạn đang muốn tìm $name.',
         restartListening: false,
@@ -1242,6 +1912,8 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _hardwareKeySubscription?.cancel();
+    _activityLogController.dispose();
     if (_isCameraInitialized) {
       _cameraController.dispose();
     }
@@ -1265,14 +1937,36 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       );
     }
 
+    final showLayoutMap = _activeRoomLayout != null;
+
     return HeroMode(
       enabled: false,
       child: Scaffold(
-        backgroundColor: Colors.black,
+        key: _cameraScaffoldKey,
+        drawerEnableOpenDragGesture: true,
+        drawer: _buildDetectionDrawer(),
+        backgroundColor: showLayoutMap ? const Color(0xFFE5E7EB) : Colors.black,
         body: Stack(
           children: [
-            Positioned.fill(child: _buildCameraOrImagePreview()),
-            if (_lastDetections.isNotEmpty)
+            Positioned.fill(
+              child: showLayoutMap
+                  ? _buildLayoutNavigationView()
+                  : _buildCameraOrImagePreview(),
+            ),
+            if (showLayoutMap)
+              Positioned(
+                left: 0,
+                top: 0,
+                width: 1,
+                height: 1,
+                child: IgnorePointer(
+                  child: Opacity(
+                    opacity: 0.01,
+                    child: CameraPreview(_cameraController),
+                  ),
+                ),
+              ),
+            if (!showLayoutMap && _lastDetections.isNotEmpty)
               CustomPaint(
                 painter: DetectionPainter(
                   _lastDetections,
@@ -1282,31 +1976,9 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                 size: Size.infinite,
               ),
             Positioned(
-              top: 60,
-              left: 16,
-              right: 16,
-              child: Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.7),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  _lastGuidance,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-              ),
-            ),
-            Positioned(
-              left: 12,
-              right: 12,
-              bottom: 100,
-              child: _buildStatusPanel(),
+              left: 0,
+              top: 96,
+              child: _buildDetectionDrawerHandle(),
             ),
           ],
         ),
@@ -1315,45 +1987,320 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     );
   }
 
-  Widget _buildStatusPanel() {
+  Widget _buildLayoutNavigationView() {
     return Container(
-      padding: const EdgeInsets.all(12),
+      color: const Color(0xFFE5E7EB),
+      child: SafeArea(
+        bottom: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 10, 14, 96),
+          child: Column(
+            children: [
+              Expanded(
+                flex: 7,
+                child: Container(
+                  width: double.infinity,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF8FAFC),
+                    borderRadius: BorderRadius.circular(24),
+                    border: Border.all(color: Colors.white, width: 2),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.12),
+                        blurRadius: 22,
+                        offset: const Offset(0, 12),
+                      ),
+                    ],
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(22),
+                    child: _navigationSceneController == null
+                        ? const Center(child: CircularProgressIndicator())
+                        : Stack(
+                            children: [
+                              WebViewWidget(controller: _navigationSceneController!),
+                              if (!_isNavigationSceneReady)
+                                Container(
+                                  color: const Color(0xFFD7D7D7),
+                                  alignment: Alignment.center,
+                                  child: const CircularProgressIndicator(),
+                                ),
+                            ],
+                          ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 18),
+              Expanded(
+                flex: 3,
+                child: _buildActivityLogPanel(),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildActivityLogPanel() {
+    final logs = _activityLogs.isEmpty
+        ? const ['Hệ thống: Ứng dụng hỗ trợ người di chuyển đang hoạt động.']
+        : _activityLogs;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(14, 12, 10, 12),
       decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.78),
-        borderRadius: BorderRadius.circular(12),
+        color: Colors.white.withOpacity(0.96),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFE0F2F1)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.10),
+            blurRadius: 16,
+            offset: const Offset(0, 6),
+          ),
+        ],
       ),
       child: Column(
-        mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            _targetObject != null
-                ? 'Đang tìm: ${ObjectMappingService.getVietnameseName(_targetObject!)}'
-                : 'Chưa chọn object',
-            style: const TextStyle(color: Colors.white, fontSize: 15),
+          const Row(
+            children: [
+              Icon(Icons.article_outlined, color: Color(0xFF2AAEB3), size: 18),
+              SizedBox(width: 8),
+              Text(
+                'Nhật ký thao tác',
+                style: TextStyle(
+                  color: Color(0xFF111827),
+                  fontSize: 15,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 6),
-          Text(
-            _recognizedText.isEmpty ? 'Text STT: chưa có' : 'Text STT: $_recognizedText',
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(color: Colors.white, fontSize: 13),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            [
-              'Detect local: $_apiStatus',
-              if (_lastAnalyzedImagePath != null)
-                'Ảnh phân tích: $_lastAnalyzedImagePath',
-            ].join('\n'),
-            maxLines: 3,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(color: Colors.white70, fontSize: 11),
+          const SizedBox(height: 8),
+          Expanded(
+            child: Scrollbar(
+              controller: _activityLogController,
+              thumbVisibility: true,
+              child: ListView.separated(
+                controller: _activityLogController,
+                padding: const EdgeInsets.only(right: 8),
+                itemCount: logs.length,
+                separatorBuilder: (_, __) => const SizedBox(height: 6),
+                itemBuilder: (context, index) {
+                  final line = logs[index];
+                  final isUser = line.startsWith('Người:');
+                  final isSystem = line.startsWith('Hệ thống:');
+                  final isMic = line.startsWith('Mic:');
+                  final color = isUser
+                      ? const Color(0xFF047857)
+                      : isSystem
+                          ? const Color(0xFF111827)
+                          : isMic
+                              ? const Color(0xFF2563EB)
+                              : const Color(0xFF475569);
+                  return Text(
+                    line,
+                    style: TextStyle(
+                      color: color,
+                      fontSize: 13,
+                      height: 1.25,
+                      fontWeight:
+                          isUser || isSystem ? FontWeight.w700 : FontWeight.w500,
+                    ),
+                  );
+                },
+              ),
+            ),
           ),
         ],
       ),
     );
   }
+
+  Widget _buildDetectionDrawerHandle() {
+    return SafeArea(
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () => _cameraScaffoldKey.currentState?.openDrawer(),
+          borderRadius: const BorderRadius.horizontal(right: Radius.circular(18)),
+          child: Container(
+            width: 44,
+            height: 58,
+            decoration: BoxDecoration(
+              color: Colors.black.withOpacity(0.70),
+              borderRadius: const BorderRadius.horizontal(right: Radius.circular(18)),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.20),
+                  blurRadius: 12,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: const Icon(
+              Icons.image_search_outlined,
+              color: Colors.white,
+              size: 24,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDetectionDrawer() {
+    final imagePath = _lastAnalyzedImagePath ?? _lastCapturedImagePath;
+
+    return Drawer(
+      child: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 46,
+                    height: 46,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFE0F7F6),
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: const Icon(
+                      Icons.image_search_outlined,
+                      color: Color(0xFF2AAEB3),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Text(
+                      'Ảnh detect',
+                      style: TextStyle(
+                        color: Color(0xFF111827),
+                        fontSize: 22,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              if (imagePath == null)
+                Container(
+                  height: 190,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF3F4F6),
+                    borderRadius: BorderRadius.circular(18),
+                  ),
+                  child: const Text(
+                    'Chưa có ảnh detect',
+                    style: TextStyle(color: Color(0xFF6B7280)),
+                  ),
+                )
+              else
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(18),
+                  child: Image.file(
+                    File(imagePath),
+                    height: 220,
+                    width: double.infinity,
+                    fit: BoxFit.contain,
+                  ),
+                ),
+              const SizedBox(height: 16),
+              Text(
+                _apiStatus,
+                style: const TextStyle(
+                  color: Color(0xFF6B7280),
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 14),
+              const Text(
+                'Vật phát hiện',
+                style: TextStyle(
+                  color: Color(0xFF111827),
+                  fontSize: 16,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Expanded(
+                child: _lastDetections.isEmpty
+                    ? const Center(
+                        child: Text(
+                          'Chưa phát hiện vật nào.',
+                          style: TextStyle(color: Color(0xFF6B7280)),
+                        ),
+                      )
+                    : ListView.separated(
+                        itemCount: _lastDetections.length,
+                        separatorBuilder: (_, __) => const SizedBox(height: 8),
+                        itemBuilder: (context, index) {
+                          final detection = _lastDetections[index];
+                          final name = ObjectMappingService.getVietnameseName(detection.label);
+                          final confidence = (detection.confidence * 100).toStringAsFixed(0);
+                          final isTarget = detection.label == _targetObject;
+                          return Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: isTarget
+                                  ? const Color(0xFFE0F7F6)
+                                  : const Color(0xFFF8FAFC),
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(
+                                color: isTarget
+                                    ? const Color(0xFF2AAEB3)
+                                    : const Color(0xFFE5E7EB),
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  isTarget ? Icons.flag_rounded : Icons.check_circle_outline,
+                                  color: isTarget
+                                      ? const Color(0xFF2AAEB3)
+                                      : const Color(0xFF10B981),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    name,
+                                    style: const TextStyle(
+                                      color: Color(0xFF111827),
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                ),
+                                Text(
+                                  '$confidence%',
+                                  style: const TextStyle(
+                                    color: Color(0xFF111827),
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildCameraOrImagePreview() {
     if (_lastCapturedImagePath == null) {
       return CameraPreview(_cameraController);
@@ -1376,12 +2323,19 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       top: false,
       child: Container(
         height: 86,
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-        decoration: const BoxDecoration(
-          color: Colors.black,
-          border: Border(
-            top: BorderSide(color: Colors.white24),
+        padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF8FAFC),
+          border: const Border(
+            top: BorderSide(color: Color(0xFFE0F2F1)),
           ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.10),
+              blurRadius: 16,
+              offset: const Offset(0, -6),
+            ),
+          ],
         ),
         child: Row(
           children: [
@@ -1421,10 +2375,10 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     return Expanded(
       child: Material(
         color: color,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(18),
         child: InkWell(
           onTap: onTap,
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(18),
           child: Padding(
             padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
             child: FittedBox(
@@ -1544,3 +2498,298 @@ class DetectionPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }
+
+class RoomNavigationMapPainter extends CustomPainter {
+  RoomNavigationMapPainter({
+    required this.roomWidth,
+    required this.roomDepth,
+    required this.objects,
+    required this.userPosition,
+    required this.userHeadingDegrees,
+    required this.targetObject,
+    required this.referenceObject,
+    required this.objectNameBuilder,
+  });
+
+  final double roomWidth;
+  final double roomDepth;
+  final List<Map<String, dynamic>> objects;
+  final Offset? userPosition;
+  final double userHeadingDegrees;
+  final String? targetObject;
+  final String? referenceObject;
+  final String Function(String label) objectNameBuilder;
+
+  double _readDouble(Map<String, dynamic> object, String key, [double fallback = 0]) {
+    final value = object[key];
+    if (value is num) return value.toDouble();
+    return double.tryParse(value?.toString() ?? '') ?? fallback;
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final safeWidth = roomWidth <= 0 ? 5.0 : roomWidth;
+    final safeDepth = roomDepth <= 0 ? 3.0 : roomDepth;
+    const padding = 26.0;
+    final scale = math.min(
+      (size.width - padding * 2) / safeWidth,
+      (size.height - padding * 2) / safeDepth,
+    );
+    final roomSize = Size(safeWidth * scale, safeDepth * scale);
+    final roomRect = Rect.fromCenter(
+      center: Offset(size.width / 2, size.height / 2),
+      width: roomSize.width,
+      height: roomSize.height,
+    );
+
+    _drawBackground(canvas, size);
+    _drawRoom(canvas, roomRect, scale);
+    _drawObjects(canvas, roomRect, scale);
+    _drawUserAndRoute(canvas, roomRect, scale);
+    _drawLegend(canvas, size);
+  }
+
+  void _drawBackground(Canvas canvas, Size size) {
+    final paint = Paint()..color = const Color(0xFFE5E7EB);
+    canvas.drawRect(Offset.zero & size, paint);
+  }
+
+  void _drawRoom(Canvas canvas, Rect roomRect, double scale) {
+    final floorPaint = Paint()..color = const Color(0xFFD4A75D);
+    final wallPaint = Paint()
+      ..color = const Color(0xFF94A3B8).withOpacity(0.22)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 7;
+    final borderPaint = Paint()
+      ..color = Colors.white.withOpacity(0.95)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3;
+    final gridPaint = Paint()
+      ..color = const Color(0xFF8B5E34).withOpacity(0.18)
+      ..strokeWidth = 1;
+
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(roomRect, const Radius.circular(8)),
+      floorPaint,
+    );
+
+    for (double x = roomRect.left; x <= roomRect.right; x += 0.5 * scale) {
+      canvas.drawLine(Offset(x, roomRect.top), Offset(x, roomRect.bottom), gridPaint);
+    }
+    for (double y = roomRect.top; y <= roomRect.bottom; y += 0.5 * scale) {
+      canvas.drawLine(Offset(roomRect.left, y), Offset(roomRect.right, y), gridPaint);
+    }
+
+    canvas.drawRect(roomRect, wallPaint);
+    canvas.drawRect(roomRect, borderPaint);
+  }
+
+  void _drawObjects(Canvas canvas, Rect roomRect, double scale) {
+    for (final object in objects) {
+      final className = (object['ClassName'] ?? object['ObjectName'] ?? '').toString();
+      if (className.isEmpty) continue;
+
+      final position = Offset(
+        _readDouble(object, 'PosX'),
+        _readDouble(object, 'PosZ'),
+      );
+      final center = _toCanvasPoint(position, roomRect, scale);
+      final objectWidth = math.max(_readDouble(object, 'Width', 0.45), 0.28) * scale;
+      final objectDepth = math.max(_readDouble(object, 'Depth', 0.45), 0.28) * scale;
+      final rotation = _readDouble(object, 'RotationY');
+      final isTarget = className == targetObject;
+      final isReference = className == referenceObject;
+
+      final fillColor = isTarget
+          ? const Color(0xFF22C55E)
+          : isReference
+              ? const Color(0xFFF97316)
+              : const Color(0xFF64748B);
+      final strokeColor = isTarget
+          ? const Color(0xFF166534)
+          : isReference
+              ? const Color(0xFF9A3412)
+              : const Color(0xFF334155);
+
+      canvas.save();
+      canvas.translate(center.dx, center.dy);
+      canvas.rotate(rotation);
+      final rect = Rect.fromCenter(
+        center: Offset.zero,
+        width: objectWidth,
+        height: objectDepth,
+      );
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(rect, const Radius.circular(6)),
+        Paint()..color = fillColor.withOpacity(isTarget || isReference ? 0.92 : 0.72),
+      );
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(rect, const Radius.circular(6)),
+        Paint()
+          ..color = strokeColor
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = isTarget || isReference ? 3 : 1.4,
+      );
+      canvas.restore();
+
+      _drawText(
+        canvas,
+        objectNameBuilder(className),
+        center + Offset(-objectWidth / 2, -objectDepth / 2 - 16),
+        color: const Color(0xFF0F172A),
+        fontSize: isTarget ? 12 : 10,
+        fontWeight: isTarget ? FontWeight.w800 : FontWeight.w600,
+      );
+    }
+  }
+
+  void _drawUserAndRoute(Canvas canvas, Rect roomRect, double scale) {
+    final user = userPosition;
+    if (user == null) {
+      _drawText(
+        canvas,
+        'Chưa xác định vị trí',
+        Offset(roomRect.center.dx - 70, roomRect.center.dy - 10),
+        color: const Color(0xFF475569),
+        fontSize: 13,
+        fontWeight: FontWeight.w700,
+      );
+      return;
+    }
+
+    final userPoint = _toCanvasPoint(user, roomRect, scale);
+    final target = _findTargetObject();
+    if (target != null) {
+      final targetPoint = _toCanvasPoint(
+        Offset(_readDouble(target, 'PosX'), _readDouble(target, 'PosZ')),
+        roomRect,
+        scale,
+      );
+      _drawDashedLine(
+        canvas,
+        userPoint,
+        targetPoint,
+        Paint()
+          ..color = const Color(0xFF2563EB).withOpacity(0.65)
+          ..strokeWidth = 2,
+      );
+    }
+
+    final headingRadians = userHeadingDegrees * math.pi / 180;
+    final headingVector = Offset(math.sin(headingRadians), math.cos(headingRadians));
+    final arrowEnd = userPoint + headingVector * 34;
+    final userPaint = Paint()..color = const Color(0xFF2563EB);
+    final glowPaint = Paint()..color = const Color(0xFF60A5FA).withOpacity(0.24);
+    canvas.drawCircle(userPoint, 22, glowPaint);
+    canvas.drawCircle(userPoint, 11, userPaint);
+    canvas.drawCircle(
+      userPoint,
+      11,
+      Paint()
+        ..color = Colors.white
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 3,
+    );
+    canvas.drawLine(
+      userPoint,
+      arrowEnd,
+      Paint()
+        ..color = const Color(0xFF1D4ED8)
+        ..strokeWidth = 4
+        ..strokeCap = StrokeCap.round,
+    );
+    canvas.drawCircle(arrowEnd, 4, Paint()..color = const Color(0xFF1D4ED8));
+    _drawText(
+      canvas,
+      'Bạn',
+      userPoint + const Offset(14, -28),
+      color: const Color(0xFF1D4ED8),
+      fontSize: 13,
+      fontWeight: FontWeight.w900,
+    );
+  }
+
+  void _drawLegend(Canvas canvas, Size size) {
+    final legendTop = size.height - 38;
+    final items = [
+      (const Color(0xFF2563EB), 'Bạn'),
+      (const Color(0xFF22C55E), 'Mục tiêu'),
+      (const Color(0xFFF97316), 'Vật mốc'),
+    ];
+    double left = 16;
+    for (final item in items) {
+      canvas.drawCircle(Offset(left + 7, legendTop + 9), 6, Paint()..color = item.$1);
+      _drawText(
+        canvas,
+        item.$2,
+        Offset(left + 18, legendTop),
+        color: const Color(0xFF334155),
+        fontSize: 11,
+        fontWeight: FontWeight.w700,
+      );
+      left += 82;
+    }
+  }
+
+  Map<String, dynamic>? _findTargetObject() {
+    if (targetObject == null) return null;
+    for (final object in objects) {
+      if ((object['ClassName'] ?? '').toString() == targetObject) {
+        return object;
+      }
+    }
+    return null;
+  }
+
+  Offset _toCanvasPoint(Offset roomPoint, Rect roomRect, double scale) {
+    return Offset(
+      roomRect.center.dx + roomPoint.dx * scale,
+      roomRect.center.dy + roomPoint.dy * scale,
+    );
+  }
+
+  void _drawDashedLine(Canvas canvas, Offset start, Offset end, Paint paint) {
+    final delta = end - start;
+    final distance = delta.distance;
+    if (distance <= 0) return;
+    final direction = delta / distance;
+    const dash = 10.0;
+    const gap = 7.0;
+    double current = 0;
+    while (current < distance) {
+      final segmentStart = start + direction * current;
+      final segmentEnd = start + direction * math.min(current + dash, distance);
+      canvas.drawLine(segmentStart, segmentEnd, paint);
+      current += dash + gap;
+    }
+  }
+
+  void _drawText(
+    Canvas canvas,
+    String text,
+    Offset offset, {
+    required Color color,
+    required double fontSize,
+    required FontWeight fontWeight,
+  }) {
+    final textPainter = TextPainter(
+      text: TextSpan(
+        text: text,
+        style: TextStyle(
+          color: color,
+          fontSize: fontSize,
+          fontWeight: fontWeight,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+      maxLines: 1,
+      ellipsis: '…',
+    );
+    textPainter.layout(maxWidth: 90);
+    textPainter.paint(canvas, offset);
+  }
+
+  @override
+  bool shouldRepaint(covariant RoomNavigationMapPainter oldDelegate) => true;
+}
+

@@ -2,14 +2,23 @@ package com.example.doan
 
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
+import android.media.AudioManager
+import android.media.ToneGenerator
 import android.speech.tts.TextToSpeech
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.view.KeyEvent
 import java.util.Locale
 
 class MainActivity : FlutterActivity() {
     private val CHANNEL = "com.example.doan/tts"
+    private val HARDWARE_KEY_CHANNEL = "com.example.doan/hardware_keys"
+    private val AUDIO_FEEDBACK_CHANNEL = "com.example.doan/audio_feedback"
     private var tts: TextToSpeech? = null
+    private var hardwareKeyEvents: EventChannel.EventSink? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -38,6 +47,68 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, AUDIO_FEEDBACK_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "playMicTone" -> {
+                        val isStarting = call.argument<Boolean>("isStarting") ?: true
+                        playMicTone(isStarting)
+                        result.success(null)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+
+        EventChannel(flutterEngine.dartExecutor.binaryMessenger, HARDWARE_KEY_CHANNEL)
+            .setStreamHandler(object : EventChannel.StreamHandler {
+                override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                    hardwareKeyEvents = events
+                }
+
+                override fun onCancel(arguments: Any?) {
+                    hardwareKeyEvents = null
+                }
+            })
+    }
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.action == KeyEvent.ACTION_DOWN) {
+            val eventSink = hardwareKeyEvents
+            when (event.keyCode) {
+                KeyEvent.KEYCODE_VOLUME_UP -> {
+                    eventSink?.success("volume_up")
+                    return eventSink != null
+                }
+                KeyEvent.KEYCODE_VOLUME_DOWN -> {
+                    eventSink?.success("volume_down")
+                    return eventSink != null
+                }
+                KeyEvent.KEYCODE_CAMERA -> {
+                    eventSink?.success("camera")
+                    return eventSink != null
+                }
+            }
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
+    private fun playMicTone(isStarting: Boolean) {
+        try {
+            val toneType = if (isStarting) {
+                ToneGenerator.TONE_PROP_BEEP
+            } else {
+                ToneGenerator.TONE_PROP_NACK
+            }
+            val durationMs = if (isStarting) 90 else 160
+            val toneGenerator = ToneGenerator(AudioManager.STREAM_MUSIC, 90)
+            toneGenerator.startTone(toneType, durationMs)
+            Handler(Looper.getMainLooper()).postDelayed({
+                toneGenerator.release()
+            }, (durationMs + 80).toLong())
+        } catch (e: Exception) {
+            println("Mic tone error: ${e.message}")
+        }
     }
 
     private fun initializeTTS() {

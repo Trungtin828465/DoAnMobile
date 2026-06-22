@@ -1,4 +1,4 @@
-import 'dart:convert';
+﻿import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -7,9 +7,9 @@ import 'package:webview_flutter/webview_flutter.dart';
 import '../models/user_model.dart';
 import '../services/room_api_service.dart';
 
-const Color _primaryColor = Color(0xFF2563EB);
-const Color _accentColor = Color(0xFF3B82F6);
-const Color _backgroundColor = Color(0xFFF4F6F8);
+const Color _primaryColor = Color(0xFF58CFC6);
+const Color _accentColor = Color(0xFF4EAFC0);
+const Color _backgroundColor = Color(0xFFF5FBFA);
 const Color _cardColor = Color(0xFFFFFFFF);
 const Color _textPrimary = Color(0xFF111827);
 const Color _textSecondary = Color(0xFF6B7280);
@@ -329,24 +329,31 @@ class _RoomLayoutScreenState extends State<RoomLayoutScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: _backgroundColor,
+      backgroundColor: _roomCreated ? const Color(0xFFD7D7D7) : _primaryColor,
       appBar: AppBar(
-        title: Text(_roomCreated ? 'Phòng 3D' : 'Phòng'),
-        backgroundColor: Colors.white,
-        foregroundColor: _textPrimary,
-        elevation: 0.6,
+        title: Text(_roomCreated ? 'Phòng 3D' : 'Tạo phòng'),
+        backgroundColor: _roomCreated ? Colors.white : _primaryColor,
+        foregroundColor: _roomCreated ? _textPrimary : Colors.white,
+        elevation: 0,
         actions: [
           if (_roomCreated)
-            IconButton(
-              tooltip: 'Lưu phòng',
-              onPressed: _savingLayout ? null : _saveRoomLayout,
-              icon: _savingLayout
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.save_outlined),
+            Container(
+              margin: const EdgeInsets.only(right: 10),
+              decoration: BoxDecoration(
+                color: _primaryColor.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: IconButton(
+                tooltip: 'Lưu phòng',
+                onPressed: _savingLayout ? null : _saveRoomLayout,
+                icon: _savingLayout
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.save_outlined),
+              ),
             ),
         ],
       ),
@@ -355,120 +362,165 @@ class _RoomLayoutScreenState extends State<RoomLayoutScreen> {
   }
 
   Widget _buildSetupView() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(20, 18, 20, 28),
-      child: Form(
-        key: _formKey,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(18),
-              decoration: BoxDecoration(
-                color: _cardColor,
-                borderRadius: BorderRadius.circular(22),
-                border: Border.all(color: const Color(0xFFE5E7EB)),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.05),
-                    blurRadius: 20,
-                    offset: const Offset(0, 10),
-                  ),
-                ],
-              ),
+    return Stack(
+      children: [
+        const _RoomSetupBackground(),
+        SafeArea(
+          top: false,
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(20, 18, 20, 28),
+            child: Form(
+              key: _formKey,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    'Kích thước phòng',
-                    style: TextStyle(
-                      color: _textPrimary,
-                      fontSize: 20,
-                      fontWeight: FontWeight.w800,
+                  const SizedBox(height: 8),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.fromLTRB(22, 24, 22, 22),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(34),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.16),
+                          blurRadius: 34,
+                          offset: const Offset(0, 18),
+                        ),
+                      ],
                     ),
-                  ),
-                  const SizedBox(height: 12),
-                  const Text(
-                    'Nhập kích thước để tạo một phòng 3D thật. Sau đó bạn có thể xoay 360 độ, thêm vật và chỉnh vị trí trực tiếp trong phòng.',
-                    style: TextStyle(
-                      color: _textSecondary,
-                      fontSize: 13,
-                      height: 1.45,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text(
+                                    'Thiết lập phòng 3D',
+                                    style: TextStyle(
+                                      color: _textPrimary,
+                                      fontSize: 30,
+                                      fontWeight: FontWeight.w900,
+                                      height: 1.05,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 10),
+                                  Text(
+                                    'Nhập kích thước phòng, sau đó thêm vật vào layout 3D để lưu vị trí.',
+                                    style: TextStyle(
+                                      color: _textSecondary.withOpacity(0.92),
+                                      fontSize: 14,
+                                      height: 1.45,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Container(
+                              width: 76,
+                              height: 76,
+                              decoration: BoxDecoration(
+                                color: _primaryColor.withOpacity(0.16),
+                                borderRadius: BorderRadius.circular(28),
+                              ),
+                              child: const Icon(
+                                Icons.view_in_ar_rounded,
+                                color: _accentColor,
+                                size: 40,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 26),
+                        _DimensionField(
+                          controller: _widthController,
+                          label: 'Chiều dài (W), mm',
+                          icon: Icons.swap_horiz_rounded,
+                          validator: _validateDimension,
+                        ),
+                        const SizedBox(height: 16),
+                        _DimensionField(
+                          controller: _depthController,
+                          label: 'Chiều rộng (D), mm',
+                          icon: Icons.open_in_full_rounded,
+                          validator: _validateDimension,
+                        ),
+                        const SizedBox(height: 16),
+                        _DimensionField(
+                          controller: _heightController,
+                          label: 'Chiều cao (H), mm',
+                          icon: Icons.height_rounded,
+                          validator: _validateDimension,
+                        ),
+                        const SizedBox(height: 26),
+                        ElevatedButton(
+                          onPressed: _loadingScene ? null : _createRoom,
+                          style: ElevatedButton.styleFrom(
+                            elevation: 0,
+                            backgroundColor: _accentColor,
+                            disabledBackgroundColor: _accentColor.withOpacity(0.45),
+                            foregroundColor: Colors.white,
+                            minimumSize: const Size.fromHeight(58),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(28),
+                            ),
+                          ),
+                          child: _loadingScene
+                              ? const SizedBox(
+                                  width: 22,
+                                  height: 22,
+                                  child: CircularProgressIndicator(
+                                    color: Colors.white,
+                                    strokeWidth: 2.4,
+                                  ),
+                                )
+                              : const Text(
+                                  'Tạo phòng',
+                                  style: TextStyle(
+                                    fontSize: 17,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                        ),
+                        const SizedBox(height: 12),
+                        OutlinedButton(
+                          onPressed: () {
+                            _widthController.text = '5000';
+                            _depthController.text = '3000';
+                            _heightController.text = '2700';
+                          },
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: _textPrimary,
+                            backgroundColor: const Color(0xFFF8FAFC),
+                            side: const BorderSide(color: Color(0xFFE5E7EB)),
+                            minimumSize: const Size.fromHeight(54),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(24),
+                            ),
+                          ),
+                          child: const Text(
+                            'Đặt lại kích thước mặc định',
+                            style: TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                   const SizedBox(height: 18),
-                  _DimensionField(
-                    controller: _widthController,
-                    label: 'Chiều dài (W), mm',
-                    validator: _validateDimension,
-                  ),
-                  const SizedBox(height: 14),
-                  _DimensionField(
-                    controller: _depthController,
-                    label: 'Chiều rộng (D), mm',
-                    validator: _validateDimension,
-                  ),
-                  const SizedBox(height: 14),
-                  _DimensionField(
-                    controller: _heightController,
-                    label: 'Chiều cao (H), mm',
-                    validator: _validateDimension,
-                  ),
+                  const _RoomSetupTip(),
                 ],
               ),
             ),
-            const SizedBox(height: 24),
-            Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: _loadingScene ? null : _createRoom,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: _accentColor,
-                      foregroundColor: Colors.white,
-                      minimumSize: const Size.fromHeight(56),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                    ),
-                    child: const Text(
-                      'Tạo phòng',
-                      style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () {
-                      _widthController.text = '5000';
-                      _depthController.text = '3000';
-                      _heightController.text = '2700';
-                    },
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: _textPrimary,
-                      backgroundColor: const Color(0xFFEFEFEF),
-                      side: BorderSide.none,
-                      minimumSize: const Size.fromHeight(56),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                    ),
-                    child: const Text(
-                      'Xóa',
-                      style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ],
+          ),
         ),
-      ),
+      ],
     );
   }
-
   Widget _buildSceneView() {
     return Stack(
       children: [
@@ -972,15 +1024,127 @@ function animate() {
   }
 }
 
+class _RoomSetupBackground extends StatelessWidget {
+  const _RoomSetupBackground();
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: Stack(
+        children: [
+          Positioned(
+            top: -70,
+            right: -70,
+            child: _RoomDecorCircle(size: 210, opacity: 0.16),
+          ),
+          Positioned(
+            bottom: -90,
+            left: -84,
+            child: _RoomDecorCircle(size: 230, opacity: 0.13),
+          ),
+          const Positioned(
+            top: 110,
+            right: -18,
+            child: _RoomDecorStripes(),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RoomSetupTip extends StatelessWidget {
+  const _RoomSetupTip();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.92),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.white.withOpacity(0.55)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 46,
+            height: 46,
+            decoration: BoxDecoration(
+              color: _primaryColor.withOpacity(0.18),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: const Icon(Icons.lightbulb_outline, color: _accentColor),
+          ),
+          const SizedBox(width: 12),
+          const Expanded(
+            child: Text(
+              'Sau khi tạo phòng, bạn có thể thêm giường, bàn, tủ, laptop và lưu layout để dùng cho chỉ đường.',
+              style: TextStyle(
+                color: _textPrimary,
+                fontWeight: FontWeight.w700,
+                height: 1.35,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RoomDecorCircle extends StatelessWidget {
+  const _RoomDecorCircle({required this.size, required this.opacity});
+
+  final double size;
+  final double opacity;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(opacity),
+        shape: BoxShape.circle,
+      ),
+    );
+  }
+}
+
+class _RoomDecorStripes extends StatelessWidget {
+  const _RoomDecorStripes();
+
+  @override
+  Widget build(BuildContext context) {
+    return Transform.rotate(
+      angle: -0.55,
+      child: Row(
+        children: List.generate(
+          3,
+          (index) => Container(
+            margin: const EdgeInsets.only(right: 12),
+            width: 13,
+            height: 118,
+            color: Colors.white.withOpacity(0.30),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _DimensionField extends StatelessWidget {
   const _DimensionField({
     required this.controller,
     required this.label,
+    required this.icon,
     required this.validator,
   });
 
   final TextEditingController controller;
   final String label;
+  final IconData icon;
   final String? Function(String?) validator;
 
   @override
@@ -991,30 +1155,35 @@ class _DimensionField extends StatelessWidget {
       keyboardType: const TextInputType.numberWithOptions(decimal: true),
       decoration: InputDecoration(
         labelText: label,
+        labelStyle: const TextStyle(
+          color: _accentColor,
+          fontWeight: FontWeight.w800,
+        ),
+        prefixIcon: Icon(icon, color: _accentColor),
         filled: true,
-        fillColor: const Color(0xFFF9FAFB),
+        fillColor: const Color(0xFFF8FAFC),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(22),
           borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
         ),
         enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(22),
           borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: const BorderSide(color: _accentColor, width: 1.5),
+          borderRadius: BorderRadius.circular(22),
+          borderSide: const BorderSide(color: _accentColor, width: 1.6),
         ),
       ),
       style: const TextStyle(
         color: _textPrimary,
         fontSize: 18,
-        fontWeight: FontWeight.w700,
+        fontWeight: FontWeight.w800,
       ),
     );
   }
 }
-
 class _PlainTextField extends StatelessWidget {
   const _PlainTextField({
     required this.controller,
@@ -1202,3 +1371,5 @@ class _RoomObjectDefinition {
   final String assetPath;
   final IconData icon;
 }
+
+

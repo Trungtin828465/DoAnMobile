@@ -7,6 +7,9 @@ File này dùng để theo dõi logic hoạt động camera, STT, TTS, detect v�
 - Người dùng vào màn hình camera và chọn layout phòng đã lưu.
 - Layout chỉ dùng để hỗ trợ suy luận hướng xoay khi detect thấy một vật khác trong phòng.
 - Thông tin layout, tọa độ và độ tin cậy chỉ in ra terminal, không đọc dài bằng TTS.
+- Khi đã chọn layout, màn hình chính sẽ hiển thị layout phòng 3D nhìn từ trên xuống thay vì camera preview.
+- Camera vẫn chụp ảnh và detect ngầm để phục vụ chỉ đường.
+- Layout 3D có chấm tròn `Bạn` biểu diễn vị trí tương đối của người dùng trong phòng.
 
 ## 2. Nói vật cần tìm
 
@@ -26,13 +29,15 @@ File này dùng để theo dõi logic hoạt động camera, STT, TTS, detect v�
 - App so sánh tọa độ vật mốc và vật cần tìm trong layout để tính hướng xoay.
 - TTS chỉ đọc hướng cần làm, ví dụ: `Tôi thấy có vật ..., dựa vào layout hãy quay người 180 độ thật chậm, rồi đứng yên 5 giây để tôi chụp lại.`
 - Terminal sẽ in chi tiết vật mốc, độ tin cậy và góc lệch để debug.
+- Nếu vật detect có trong layout, bản đồ sẽ cập nhật vị trí tương đối của người dùng dựa trên vật mốc đó.
 
 ## 5. Chụp lại sau khi xoay
 
 - Sau khi hướng dẫn xoay, app đợi 5 giây rồi tự chụp ảnh mới.
 - Nếu ảnh mới phát hiện đúng vật cần tìm, app dừng vòng quét và nói: `Đã phát hiện ... Hãy bật mic và nói: sẵn sàng.`
-- Trạng thái này tránh lỗi lặp vô hạn cứ xoay 15 độ dù đã thấy vật.
+- Trạng thái này tránh lỗi lặp vô hạn cứ yêu cầu xoay dù đã thấy vật.
 - Trong một nhiệm vụ tìm vật, câu `sẵn sàng` chỉ được hỏi một lần.
+- Các góc xoay dùng để demo là các góc dễ quay: `45 độ`, `90 độ`, `180 độ`.
 
 ## 6. Người dùng nói sẵn sàng
 
