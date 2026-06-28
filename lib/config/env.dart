@@ -21,4 +21,17 @@ class EnvConfig {
   static String get openrouterModel {
     return dotenv.env['openrouterModel'] ?? 'openai/gpt-3.5-turbo';
   }
+
+  static String get geminiApiKey {
+    return dotenv.env['geminiApiKey'] ?? '';
+  }
+
+  static String get geminiVisionModel {
+    return dotenv.env['geminiVisionModel'] ?? 'gemini-3.5-flash';
+  }
+
+  static String get geminiApiUrl {
+    return dotenv.env['geminiApiUrl'] ??
+        'https://generativelanguage.googleapis.com/v1beta/interactions';
+  }
 }

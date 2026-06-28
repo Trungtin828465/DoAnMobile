@@ -14,6 +14,7 @@ import '../services/tflite_detection_service.dart';
 import '../services/object_mapping_service.dart';
 import '../services/guidance_service.dart';
 import '../services/confirmation_intent_service.dart';
+import '../services/vision_verification_service.dart';
 import '../models/user_model.dart';
 
 class CameraScreen extends StatefulWidget {
@@ -43,6 +44,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   late TTSApiService _ttsApi;
   late TFLiteDetectionService _detectionService;
   late ConfirmationIntentService _confirmationIntentService;
+  late VisionVerificationService _visionVerificationService;
 
   bool _isCameraInitialized = false;
   bool _isSpeechInitialized = false;
@@ -58,6 +60,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   bool _awaitingMovementConfirmation = false;
   bool _awaitingReadyForMovement = false;
   bool _hasAskedReadyForMovement = false;
+  bool _movementGuidanceStarted = false;
   bool _hasHandledCurrentSpeech = false;
   _CameraTask _activeTask = _CameraTask.idle;
   String? _targetObject;
@@ -72,7 +75,9 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   Size? _lastImageSize;
   List<TFLiteDetectionResult> _lastDetections = [];
   TFLiteDetectionResult? _pendingTargetDetection;
+  TFLiteDetectionResult? _lastLowConfidenceTargetDetection;
   Map<String, dynamic>? _activeRoomLayout;
+  String? _lastLowConfidenceImagePath;
   Offset? _estimatedUserPosition;
   double _estimatedUserHeadingDegrees = 0;
   WebViewController? _navigationSceneController;
@@ -81,6 +86,9 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   StreamSubscription<dynamic>? _hardwareKeySubscription;
   bool _isNavigationSceneReady = false;
   int _navigationStepCount = 0;
+  int? _lastSuggestedStepCount;
+  int _scanRotationDegrees = 0;
+  int _lastScanRotationDegrees = 0;
   DateTime _lastSpeechTime = DateTime.now();
   DateTime? _lastHardwareMicButtonTime;
   DateTime? _lastSpeechErrorTime;
@@ -89,8 +97,10 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   final List<String> _activityLogs = [];
   static const int _speechCooldownMs = 2000;
   static const int _maxNavigationSteps = 8;
-  static const double _visualConfirmThreshold = 0.4;
-  static const double _layoutReferenceThreshold = 0.4;
+  static const double _visualConfirmThreshold = 0.5;
+  static const double _lowConfidenceTargetThreshold = 0.1;
+  static const double _layoutReferenceThreshold = 0.1;
+  static const double _strongVisualThreshold = 0.5;
   static const Map<String, String> _navigationModelAssets = {
     'bed': 'assets/model/bed.glb',
     'sofa': 'assets/model/sofa.glb',
@@ -217,6 +227,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
       _detectionService = TFLiteDetectionService();
       _confirmationIntentService = ConfirmationIntentService();
+      _visionVerificationService = VisionVerificationService();
       try {
         await _detectionService.initialize();
         _isDetectionInitialized = true;
@@ -421,6 +432,7 @@ const OBJECT_SIZE = {
   refrigerator: 1.2, tv: .9, door: 1.9, window: 1.1, fan: .8,
   laptop: .45, washing_machine: .85
 };
+const VERTICAL_TYPES = new Set(['window', 'tv', 'laptop']);
 
 let scene, camera, renderer, orbitControls, loader;
 let userMarker, userArrow, targetMarker;
@@ -564,11 +576,13 @@ function addModel(type, saved) {
     const root = new THREE.Group();
     root.userData.type = type;
     root.add(model);
-    root.position.set(Number(saved.PosX || 0), Number(saved.PosY || 0), Number(saved.PosZ || 0));
+    const savedY = Number(saved.PosY || 0);
+    const fallbackY = type === 'laptop' && savedY === 0 ? .72 : savedY;
+    root.position.set(Number(saved.PosX || 0), fallbackY, Number(saved.PosZ || 0));
     root.rotation.set(Number(saved.RotationX || 0), Number(saved.RotationY || 0), Number(saved.RotationZ || 0));
     const savedScale = Number(saved.Scale || 1);
     root.scale.set(savedScale, savedScale, savedScale);
-    keepObjectInsideRoom(root);
+    keepObjectInsideRoom(root, type);
     objects.push(root);
     scene.add(root);
     if (pendingTargetType) setTargetObject(pendingTargetType);
@@ -592,7 +606,7 @@ function centerModelGeometry(model) {
   model.position.y -= box.min.y;
 }
 
-function keepObjectInsideRoom(object) {
+function keepObjectInsideRoom(object, type) {
   const halfW = ROOM.width / 2;
   const halfD = ROOM.depth / 2;
   const box = new THREE.Box3().setFromObject(object);
@@ -601,7 +615,15 @@ function keepObjectInsideRoom(object) {
   if (box.min.z < -halfD) object.position.z += -halfD - box.min.z;
   if (box.max.z > halfD) object.position.z -= box.max.z - halfD;
   const refreshed = new THREE.Box3().setFromObject(object);
-  object.position.y -= refreshed.min.y;
+  if (VERTICAL_TYPES.has(type)) {
+    if (refreshed.min.y < 0) object.position.y += -refreshed.min.y;
+    const refreshedTop = new THREE.Box3().setFromObject(object);
+    if (refreshedTop.max.y > ROOM.height) {
+      object.position.y -= refreshedTop.max.y - ROOM.height;
+    }
+  } else {
+    object.position.y -= refreshed.min.y;
+  }
 }
 
 function createMarkers() {
@@ -716,6 +738,16 @@ window.resetNavigationCamera = resetCamera;
     return null;
   }
 
+  List<Map<String, dynamic>> _findLayoutObjects(String className) {
+    return _layoutObjects
+        .where((object) => (object['ClassName'] ?? '').toString() == className)
+        .toList();
+  }
+
+  bool _canVerifyLabelWithGemini(String label) {
+    return _activeRoomLayout != null && _findLayoutObject(label) != null;
+  }
+
   String _objectDisplayName(String label) {
     switch (label) {
       case 'bed':
@@ -766,6 +798,17 @@ window.resetNavigationCamera = resetCamera;
       if (best == null || detection.confidence > best.confidence) {
         best = detection;
       }
+    }
+    if (best != null && best.confidence < _strongVisualThreshold) {
+      final objectName = ObjectMappingService.getVietnameseName(best.label);
+      final percent = (best.confidence * 100).toStringAsFixed(0);
+      print(
+        '🗺️ Layout map: $objectName chỉ $percent% nhưng có trong layout, dùng làm mốc định vị',
+      );
+      _addActivityLog(
+        'Layout',
+        '$objectName $percent% có trong layout, dùng làm mốc hỗ trợ.',
+      );
     }
     return best;
   }
@@ -915,39 +958,35 @@ window.resetNavigationCamera = resetCamera;
 
   String _createStepGuidance(TFLiteDetectionResult detection) {
     final sourceSize = _lastImageSize ?? MediaQuery.of(context).size;
-    final zone = GuidanceService.analyzeHorizontalPosition(
-      detection.centerX,
-      sourceSize.width,
-    );
-    final distance = GuidanceService.estimateDistance(
-      detection.width,
-      detection.height,
-      sourceSize.width,
-      sourceSize.height,
-    );
     final objectName = ObjectMappingService.getVietnameseName(detection.label);
+    final stepCount = _nextMovementStepCount(detection, sourceSize);
 
-    final positionText = switch (zone) {
-      ScreenZone.left => '$objectName đang lệch về bên trái',
-      ScreenZone.center => '$objectName đang ở phía trước',
-      ScreenZone.right => '$objectName đang lệch về bên phải',
-    };
+    final horizontalAdjustment = _createHorizontalAdjustmentGuidance(
+      detection,
+      sourceSize,
+    );
+    final verticalAdjustment = _createCameraTiltGuidance(
+      detection,
+      sourceSize,
+      objectName,
+    );
 
-    final stepText = switch ((zone, distance)) {
-      (ScreenZone.left, _) =>
-        'Chặng này chỉ xoay người và điện thoại sang trái khoảng 45 độ. Chưa cần bước tới.',
-      (ScreenZone.right, _) =>
-        'Chặng này chỉ xoay người và điện thoại sang phải khoảng 45 độ. Chưa cần bước tới.',
-      (ScreenZone.center, DistanceLevel.far) =>
-        'Chặng này đi thẳng ba bước nhỏ. Mỗi bước thật chậm, giữ tay phía trước để dò đường.',
-      (ScreenZone.center, DistanceLevel.medium) =>
-        'Chặng này đi thẳng hai bước nhỏ. Sau hai bước thì dừng lại.',
-      (ScreenZone.center, DistanceLevel.near) =>
-        'Chặng này đi thẳng một bước rất nhỏ. Vật đã gần, hãy giảm tốc và đưa tay ra trước.',
-    };
+    if (horizontalAdjustment != null || verticalAdjustment != null) {
+      final stepText = _createMovementStepText(
+        stepCount,
+        horizontalDirection: horizontalAdjustment,
+      );
+      final cameraText = verticalAdjustment == null
+          ? ''
+          : ' Sau khi dừng lại, $verticalAdjustment';
+
+      return '$objectName đang nằm trong khung hình nhưng hơi lệch. $stepText$cameraText Sau khi làm xong, hãy nói: đã xong.';
+    }
+
+    final stepText = _createMovementStepText(stepCount);
     final verticalText = _createImageVerticalGuidance(detection, objectName);
 
-    return '$positionText. $verticalText $stepText Sau khi làm xong, hãy nói: đã xong.';
+    return '$objectName đang nằm trong khung hình phía trước. $verticalText $stepText Sau khi làm xong, hãy nói: đã xong.';
   }
 
   bool _isTargetCloseEnough(TFLiteDetectionResult detection) {
@@ -957,8 +996,146 @@ window.resetNavigationCamera = resetCamera;
       sourceSize.width,
     );
     final areaRatio = detection.area / (sourceSize.width * sourceSize.height);
+    final widthRatio = detection.width / sourceSize.width;
+    final heightRatio = detection.height / sourceSize.height;
 
-    return zone == ScreenZone.center && areaRatio >= 0.30;
+    final isNearByEdge = (_isDetectionAtBottomEdge(detection, sourceSize) ||
+            _isDetectionAtTopEdge(detection, sourceSize)) &&
+        areaRatio >= 0.24 &&
+        (widthRatio >= 0.55 || heightRatio >= 0.78);
+    if (isNearByEdge) {
+      final objectName = ObjectMappingService.getVietnameseName(detection.label);
+      print(
+        '✅ Điều hướng: $objectName sát mép ảnh và thật sự đủ lớn, coi là đã rất gần area=${areaRatio.toStringAsFixed(3)}, width=${widthRatio.toStringAsFixed(2)}, height=${heightRatio.toStringAsFixed(2)}',
+      );
+      return true;
+    }
+
+    if (areaRatio >= 0.34 || (widthRatio >= 0.70 && heightRatio >= 0.55)) {
+      final objectName = ObjectMappingService.getVietnameseName(detection.label);
+      print(
+        '✅ Điều hướng: $objectName chiếm nhiều khung hình, coi là rất gần area=${areaRatio.toStringAsFixed(3)}, width=${widthRatio.toStringAsFixed(2)}, height=${heightRatio.toStringAsFixed(2)}',
+      );
+      return true;
+    }
+
+    return zone == ScreenZone.center &&
+        areaRatio >= 0.30 &&
+        (widthRatio >= 0.55 || heightRatio >= 0.65);
+  }
+
+  String _createMovementStepText(
+    int stepCount, {
+    String? horizontalDirection,
+  }) {
+    final directionText = horizontalDirection == null
+        ? 'đi thẳng'
+        : 'đi hơi chếch $horizontalDirection';
+
+    return switch (stepCount) {
+      3 =>
+        'Chặng này $directionText ba bước nhỏ. Mỗi bước thật chậm, giữ tay phía trước để dò đường.',
+      2 =>
+        'Chặng này $directionText hai bước nhỏ. Sau hai bước thì dừng lại.',
+      _ =>
+        'Chặng này $directionText một bước rất nhỏ. Hãy giảm tốc và giữ tay phía trước để dò đường.',
+    };
+  }
+
+  bool _isDetectionAtBottomEdge(
+    TFLiteDetectionResult detection,
+    Size sourceSize,
+  ) {
+    final bottomRatio = (detection.y + detection.height) / sourceSize.height;
+    final centerRatio = detection.centerY / sourceSize.height;
+    return bottomRatio >= 0.96 || centerRatio >= 0.82;
+  }
+
+  bool _isDetectionAtTopEdge(
+    TFLiteDetectionResult detection,
+    Size sourceSize,
+  ) {
+    final topRatio = detection.y / sourceSize.height;
+    final centerRatio = detection.centerY / sourceSize.height;
+    return topRatio <= 0.04 || centerRatio <= 0.18;
+  }
+
+  String? _createHorizontalAdjustmentGuidance(
+    TFLiteDetectionResult detection,
+    Size sourceSize,
+  ) {
+    final centerRatio = detection.centerX / sourceSize.width;
+    final leftRatio = detection.x / sourceSize.width;
+    final rightRatio = (detection.x + detection.width) / sourceSize.width;
+
+    if (leftRatio <= 0.02 || centerRatio < 0.32) {
+      return 'sang trái';
+    }
+
+    if (rightRatio >= 0.98 || centerRatio > 0.68) {
+      return 'sang phải';
+    }
+
+    return null;
+  }
+
+  String? _createCameraTiltGuidance(
+    TFLiteDetectionResult detection,
+    Size sourceSize,
+    String objectName,
+  ) {
+    final centerRatio = detection.centerY / sourceSize.height;
+
+    if (centerRatio < 0.28) {
+      return 'nâng camera lên một chút để nhìn rõ $objectName hơn.';
+    }
+
+    if (centerRatio > 0.72) {
+      return 'hạ camera xuống một chút để nhìn rõ $objectName hơn.';
+    }
+
+    return null;
+  }
+
+  int _nextMovementStepCount(
+    TFLiteDetectionResult detection,
+    Size sourceSize,
+  ) {
+    final areaRatio = detection.area / (sourceSize.width * sourceSize.height);
+    final rawStepCount = areaRatio < 0.06
+        ? 3
+        : areaRatio < 0.14
+            ? 2
+            : 1;
+    final cappedStepCount = _lastSuggestedStepCount == null
+        ? rawStepCount
+        : math.min(rawStepCount, _lastSuggestedStepCount!);
+    _lastSuggestedStepCount = cappedStepCount;
+
+    if (rawStepCount > cappedStepCount) {
+      print(
+        '🧭 Điều hướng: giới hạn chặng từ $rawStepCount bước xuống $cappedStepCount bước để chặng sau không lớn hơn chặng trước',
+      );
+    }
+
+    return cappedStepCount;
+  }
+
+  String _createCloseReachGuidance(
+    TFLiteDetectionResult detection,
+    String objectName,
+  ) {
+    final sourceSize = _lastImageSize ?? MediaQuery.of(context).size;
+
+    if (_isDetectionAtBottomEdge(detection, sourceSize)) {
+      return '$objectName đã ở rất gần và nằm thấp phía trước. Hãy dừng lại, hạ tay xuống thấp và dò thật chậm để tìm vật.';
+    }
+
+    if (_isDetectionAtTopEdge(detection, sourceSize)) {
+      return '$objectName đã ở rất gần và nằm cao phía trước. Hãy dừng lại, đưa tay lên cao từ từ để dò vật, không với quá nhanh.';
+    }
+
+    return '$objectName đã ở rất gần. Hãy dừng lại, đưa tay lại gần phía trước để tìm vật.';
   }
 
   String _createImageVerticalGuidance(
@@ -1077,11 +1254,19 @@ window.resetNavigationCamera = resetCamera;
     return nearest;
   }
 
-  TFLiteDetectionResult? _bestReliableDetection({bool includeTarget = false}) {
+  TFLiteDetectionResult? _bestReliableDetection({
+    bool includeTarget = false,
+    double minConfidence = _layoutReferenceThreshold,
+    double? maxConfidence,
+  }) {
     TFLiteDetectionResult? best;
 
     for (final detection in _lastDetections) {
-      if (detection.confidence < _layoutReferenceThreshold) continue;
+      if (detection.confidence < minConfidence) continue;
+      if (maxConfidence != null && detection.confidence >= maxConfidence) {
+        continue;
+      }
+      if (_findLayoutObject(detection.label) == null) continue;
       if (!includeTarget && detection.label == _targetObject) continue;
 
       if (best == null || detection.confidence > best.confidence) {
@@ -1090,6 +1275,141 @@ window.resetNavigationCamera = resetCamera;
     }
 
     return best;
+  }
+
+  TFLiteDetectionResult? _bestTargetDetectionInRange(
+    List<TFLiteDetectionResult> detections, {
+    required double minConfidence,
+    double? maxConfidence,
+  }) {
+    if (_targetObject == null) return null;
+
+    TFLiteDetectionResult? best;
+    for (final detection in detections) {
+      if (detection.label != _targetObject) continue;
+      if (detection.confidence < minConfidence) continue;
+      if (maxConfidence != null && detection.confidence >= maxConfidence) {
+        continue;
+      }
+      if (best == null || detection.confidence > best.confidence) {
+        best = detection;
+      }
+    }
+    return best;
+  }
+
+  Future<TFLiteDetectionResult?> _verifyLowConfidenceTargetIfNeeded() async {
+    final lowDetection = _lastLowConfidenceTargetDetection;
+    final imagePath = _lastLowConfidenceImagePath;
+    if (_targetObject == null ||
+        lowDetection == null ||
+        imagePath == null) {
+      return null;
+    }
+
+    final objectName = ObjectMappingService.getVietnameseName(_targetObject!);
+    final candidatePercent =
+        (lowDetection.confidence * 100).toStringAsFixed(0);
+    _addActivityLog(
+      'Gemini',
+      'Gửi crop-box $objectName $candidatePercent% để xác minh.',
+    );
+
+    final isConfirmed = await _verifyDetectionWithGemini(
+      imagePath: imagePath,
+      detection: lowDetection,
+      expectedLabel: _targetObject!,
+      logName: objectName,
+    );
+
+    if (isConfirmed) {
+      print(
+        '✅ Gemini Vision: xác nhận $objectName từ box TFLite thấp $candidatePercent%',
+      );
+      _handleObjectFound(lowDetection);
+      return lowDetection;
+    }
+
+    _addActivityLog(
+      'Gemini',
+      'Không xác nhận crop-box là $objectName. Bỏ qua box nghi ngờ.',
+    );
+    return null;
+  }
+
+  Future<bool> _verifyDetectionWithGemini({
+    required String imagePath,
+    required TFLiteDetectionResult detection,
+    required String expectedLabel,
+    required String logName,
+  }) async {
+    if (!_canVerifyLabelWithGemini(expectedLabel)) {
+      print(
+        '⚠️ Gemini: bỏ qua crop-box $logName vì label không có trong layout',
+      );
+      _addActivityLog(
+        'Gemini',
+        'Bỏ qua $logName vì vật này không có trong layout.',
+      );
+      return false;
+    }
+
+    final result = await _visionVerificationService.verifyDetection(
+      imageFile: File(imagePath),
+      detection: detection,
+      expectedLabel: expectedLabel,
+    );
+
+    if (result == null) {
+      final errorDetail = _visionVerificationService.lastError;
+      _addActivityLog(
+        'Gemini',
+        errorDetail == null || errorDetail.isEmpty
+            ? 'Chưa xác minh được crop-box $logName. Bỏ qua để tránh xử lý sai.'
+            : 'Chưa xác minh được crop-box $logName. Lỗi: $errorDetail',
+      );
+      return false;
+    }
+
+    final geminiPercent = (result.confidence * 100).toStringAsFixed(0);
+    final tflitePercent = (detection.confidence * 100).toStringAsFixed(0);
+    final reasonText = result.reason.trim().isEmpty
+        ? ''
+        : ' Lý do: ${result.reason.trim()}.';
+    final isConfirmed = result.isCorrect && result.confidence >= 0.55;
+    _addActivityLog(
+      'Gemini',
+      isConfirmed
+          ? 'Xác nhận crop-box $logName: đúng. TFLite $tflitePercent%, Gemini $geminiPercent%.$reasonText'
+          : 'Xác nhận crop-box $logName: chưa đủ chắc. TFLite $tflitePercent%, Gemini $geminiPercent%.$reasonText',
+    );
+    return isConfirmed;
+  }
+
+  Future<void> _handleConfirmedTargetDuringNavigation(
+    TFLiteDetectionResult found,
+  ) async {
+    if (_targetObject == null) return;
+
+    final objectName = ObjectMappingService.getVietnameseName(_targetObject!);
+    if (!_awaitingReadyForMovement && !_hasAskedReadyForMovement) {
+      _pendingTargetDetection = found;
+      _awaitingReadyForMovement = true;
+      _hasAskedReadyForMovement = true;
+      _awaitingMovementConfirmation = false;
+      final message =
+          'Đã phát hiện $objectName. Hãy bật mic và nói: sẵn sàng.';
+      if (mounted) {
+        setState(() {
+          _lastGuidance = message;
+          _recognizedText = 'Hãy bật mic và nói: sẵn sàng';
+        });
+      }
+      await _speak(message, restartListening: false);
+      return;
+    }
+
+    await _startMovementToDetectedTarget(found);
   }
 
   double _normalizeAngle(double angle) {
@@ -1114,7 +1434,8 @@ window.resetNavigationCamera = resetCamera;
     final objectName = _targetObject == null
         ? 'vật cần tìm'
         : ObjectMappingService.getVietnameseName(_targetObject!);
-    return 'Chưa phát hiện rõ $objectName trong ảnh. Vui lòng xoay người và điện thoại sang phải 45 độ thật chậm, rồi đứng yên 3 giây để tôi chụp lại.';
+    _lastScanRotationDegrees = 45;
+    return 'Chưa phát hiện rõ $objectName trong ảnh. Vui lòng xoay nhẹ người và điện thoại sang phải khoảng 45 độ, không cần thật chính xác, rồi đứng yên 3 giây để tôi chụp lại.';
   }
 
   String _createLayoutScanGuidance(TFLiteDetectionResult reference) {
@@ -1133,7 +1454,8 @@ window.resetNavigationCamera = resetCamera;
 
     if (target == null || seenObject == null) {
       print('⚠️ Layout: thiếu tọa độ $seenName hoặc $targetName trong phòng');
-      return 'Tôi thấy $seenName. Hãy xoay phải 45 độ thật chậm, rồi đứng yên 3 giây để tôi chụp lại.';
+      _lastScanRotationDegrees = 45;
+      return 'Tôi thấy $seenName. Hãy xoay nhẹ sang phải khoảng 45 độ, không cần thật chính xác, rồi đứng yên 3 giây để tôi chụp lại.';
     }
 
     final targetX = _readDouble(target, 'PosX');
@@ -1151,14 +1473,20 @@ window.resetNavigationCamera = resetCamera;
     );
 
     if (deltaDegrees.abs() < 20) {
+      _lastScanRotationDegrees = 0;
       return 'Tôi thấy $seenName. Dựa vào layout, hãy giữ hướng hiện tại, nghiêng điện thoại nhẹ sang trái rồi sang phải, sau đó đứng yên 3 giây để tôi chụp lại.';
     }
 
     if (deltaDegrees.abs() >= 150) {
+      _lastScanRotationDegrees = 180;
       return 'Tôi thấy $seenName. Dựa vào layout, hãy quay người 180 độ thật chậm, rồi đứng yên 3 giây để tôi chụp lại.';
     }
 
-    final direction = deltaDegrees < 0 ? 'trái' : 'phải';
+    final direction = deltaDegrees < 0 ? 'phải' : 'trái';
+    _lastScanRotationDegrees = roundedAngle;
+    print(
+      '🧭 Layout: hướng xoay đề xuất = $direction $roundedAngle độ',
+    );
     return 'Tôi thấy $seenName. Dựa vào layout, hãy xoay người và điện thoại sang $direction khoảng $roundedAngle độ thật chậm, rồi đứng yên 3 giây để tôi chụp lại.';
   }
 
@@ -1192,6 +1520,8 @@ window.resetNavigationCamera = resetCamera;
 
     _activeTask = _CameraTask.detecting;
     _isProcessing = true;
+    _lastLowConfidenceTargetDetection = null;
+    _lastLowConfidenceImagePath = null;
     if (mounted) {
       setState(() => _apiStatus = 'Đang chụp ảnh...');
     }
@@ -1236,23 +1566,56 @@ window.resetNavigationCamera = resetCamera;
       }
 
       if (_targetObject != null && result.detections.isNotEmpty) {
-        TFLiteDetectionResult? found;
-        for (final detection in result.detections) {
-          if (detection.label == _targetObject &&
-              detection.confidence >= _visualConfirmThreshold &&
-              (found == null || detection.confidence > found.confidence)) {
-            found = detection;
-          }
-        }
+        final found = _bestTargetDetectionInRange(
+          result.detections,
+          minConfidence: _visualConfirmThreshold,
+        );
 
         if (found != null) {
-          print('✅ Detect local: đã xác nhận vật mục tiêu với độ tin cậy đủ cao');
+          print(
+            '✅ Detect local: đã xác nhận vật mục tiêu >= ${(_visualConfirmThreshold * 100).toStringAsFixed(0)}%',
+          );
           _handleObjectFound(found);
           return found;
+        }
+
+        final lowConfidenceTarget = _bestTargetDetectionInRange(
+          result.detections,
+          minConfidence: _lowConfidenceTargetThreshold,
+          maxConfidence: _visualConfirmThreshold,
+        );
+        if (lowConfidenceTarget != null) {
+          final objectName =
+              ObjectMappingService.getVietnameseName(lowConfidenceTarget.label);
+          final percent =
+              (lowConfidenceTarget.confidence * 100).toStringAsFixed(0);
+          if (_canVerifyLabelWithGemini(lowConfidenceTarget.label)) {
+            _lastLowConfidenceTargetDetection = lowConfidenceTarget;
+            _lastLowConfidenceImagePath = image.path;
+            print(
+              '⚠️ Detect local: nghi ngờ $objectName $percent%, có trong layout nên cần Gemini xác minh crop-box',
+            );
+            _addActivityLog(
+              'Detect',
+              'Nghi ngờ $objectName $percent%, chờ Gemini xác minh crop-box.',
+            );
+            setState(() {
+              _lastGuidance =
+                  'Có thể đã thấy $objectName nhưng độ tin cậy còn thấp.';
+            });
+          } else {
+            print(
+              '⚠️ Detect local: bỏ qua $objectName $percent% vì không có trong layout',
+            );
+            _addActivityLog(
+              'Detect',
+              'Bỏ qua $objectName $percent% vì không có trong layout.',
+            );
+          }
         } else {
           setState(() {
             _lastGuidance =
-                'Đã detect ảnh nhưng chưa thấy rõ vật mục tiêu với độ tin cậy đủ cao';
+                'Đã detect ảnh nhưng chưa thấy rõ vật mục tiêu với độ tin cậy từ 10% trở lên';
           });
         }
       }
@@ -1290,8 +1653,32 @@ window.resetNavigationCamera = resetCamera;
     _awaitingMovementConfirmation = false;
     _awaitingReadyForMovement = false;
     _hasAskedReadyForMovement = false;
+    _movementGuidanceStarted = false;
     _pendingTargetDetection = null;
+    _lastLowConfidenceTargetDetection = null;
+    _lastLowConfidenceImagePath = null;
     _navigationStepCount = 0;
+    _lastSuggestedStepCount = null;
+    _scanRotationDegrees = 0;
+    _lastScanRotationDegrees = 0;
+
+    if (_activeRoomLayout != null && _findLayoutObject(_targetObject!) == null) {
+      print(
+        '⚠️ Layout: $objectName chưa có trong layout, vẫn ưu tiên camera detect và dùng quét 45 độ',
+      );
+      _addActivityLog(
+        'Layout',
+        '$objectName chưa có trong layout, vẫn tiếp tục tìm bằng camera.',
+      );
+    }
+
+    final sameTargetObjects = _findLayoutObjects(_targetObject!);
+    if (sameTargetObjects.length > 1) {
+      await _speak(
+        'Trong layout có ${sameTargetObjects.length} $objectName. Tôi sẽ ưu tiên vị trí phù hợp nhất theo ảnh camera và đưa bạn lần lượt đến từng vị trí nếu cần.',
+        restartListening: false,
+      );
+    }
 
     await _speak(
       'Tôi sẽ chụp ảnh để tìm $objectName. Vui lòng giữ điện thoại hướng về phía trước và đứng yên trong giây lát.',
@@ -1308,9 +1695,15 @@ window.resetNavigationCamera = resetCamera;
       _awaitingMovementConfirmation = false;
       _awaitingReadyForMovement = false;
       _hasAskedReadyForMovement = false;
+      _movementGuidanceStarted = false;
       _pendingTargetDetection = null;
+      _lastLowConfidenceTargetDetection = null;
+      _lastLowConfidenceImagePath = null;
+      _lastSuggestedStepCount = null;
+      _scanRotationDegrees = 0;
+      _lastScanRotationDegrees = 0;
       await _speak(
-        'Tôi đã hướng dẫn nhiều lần nhưng vẫn chưa đưa $objectName vào khung hình đủ rõ. Vui lòng dừng lại, kiểm tra an toàn xung quanh, rồi bấm mic để thử lại từ đầu.',
+        'Tôi vẫn chưa thấy rõ $objectName. Vui lòng đứng yên, xoay nhẹ sang phải khoảng 45 độ rồi bấm mic để thử lại từ đầu.',
         restartListening: false,
       );
       return;
@@ -1320,27 +1713,95 @@ window.resetNavigationCamera = resetCamera;
     if (!mounted || !_isNavigationActive || _targetObject == null) return;
 
     final objectName = ObjectMappingService.getVietnameseName(_targetObject!);
-    if (found != null &&
-        !_awaitingReadyForMovement &&
-        !_hasAskedReadyForMovement) {
-      _pendingTargetDetection = found;
-      _awaitingReadyForMovement = true;
-      _hasAskedReadyForMovement = true;
-      _awaitingMovementConfirmation = false;
-      final message =
-          'Đã phát hiện $objectName. Hãy bật mic và nói: sẵn sàng.';
-      if (mounted) {
-        setState(() {
-          _lastGuidance = message;
-          _recognizedText = 'Hãy bật mic và nói: sẵn sàng';
-        });
-      }
-      await _speak(message, restartListening: false);
+    if (found != null) {
+      await _handleConfirmedTargetDuringNavigation(found);
       return;
     }
 
+    if (_movementGuidanceStarted) {
+      final lowConfidenceTarget = _lastLowConfidenceTargetDetection;
+      if (lowConfidenceTarget != null) {
+        final detectedName =
+            ObjectMappingService.getVietnameseName(lowConfidenceTarget.label);
+        final percent =
+            (lowConfidenceTarget.confidence * 100).toStringAsFixed(0);
+        print(
+          '✅ Điều hướng: đang đi từng chặng, vẫn bám theo $detectedName dù confidence $percent%',
+        );
+        _addActivityLog(
+          'Detect',
+          'Đang trong lộ trình, vẫn bám theo $detectedName $percent%.',
+        );
+        await _handleConfirmedTargetDuringNavigation(lowConfidenceTarget);
+        return;
+      }
+    } else {
+      final lowConfidenceTarget = _lastLowConfidenceTargetDetection;
+      if (lowConfidenceTarget != null) {
+        final verifiedLowConfidenceTarget =
+            await _verifyLowConfidenceTargetIfNeeded();
+        if (!mounted || !_isNavigationActive || _targetObject == null) return;
+        if (verifiedLowConfidenceTarget != null) {
+          await _handleConfirmedTargetDuringNavigation(
+            verifiedLowConfidenceTarget,
+          );
+          return;
+        }
+      } else {
+        final betterReference = _bestReliableDetection(
+          minConfidence: _layoutReferenceThreshold,
+        );
+        if (betterReference != null) {
+          final targetName =
+              ObjectMappingService.getVietnameseName(_targetObject!);
+          final refName =
+              ObjectMappingService.getVietnameseName(betterReference.label);
+          print(
+            '🧭 Detect: chưa có box $targetName đủ ngưỡng thấp, dùng $refName làm mốc layout',
+          );
+        }
+      }
+    }
+
     if (found == null) {
-      final reliableReference = _bestReliableDetection();
+      if (!_movementGuidanceStarted && _scanRotationDegrees >= 360) {
+        await _stopNavigationBecauseScanCompleted(objectName);
+        return;
+      }
+
+      TFLiteDetectionResult? reliableReference = _bestReliableDetection(
+        minConfidence: _strongVisualThreshold,
+      );
+      if (reliableReference == null) {
+        final lowReference = _bestReliableDetection(
+          minConfidence: _layoutReferenceThreshold,
+          maxConfidence: _strongVisualThreshold,
+        );
+        final imagePath = _lastCapturedImagePath;
+        if (lowReference != null && imagePath != null) {
+          final seenName =
+              ObjectMappingService.getVietnameseName(lowReference.label);
+          final seenPercent =
+              (lowReference.confidence * 100).toStringAsFixed(0);
+          _addActivityLog(
+            'Gemini',
+            'Gửi crop-box $seenName $seenPercent% để xác minh vật mốc layout.',
+          );
+          final isReferenceConfirmed = await _verifyDetectionWithGemini(
+            imagePath: imagePath,
+            detection: lowReference,
+            expectedLabel: lowReference.label,
+            logName: seenName,
+          );
+          if (isReferenceConfirmed) {
+            reliableReference = lowReference;
+          } else {
+            print(
+              '⚠️ Layout: bỏ qua vật mốc ${lowReference.label} vì Gemini không xác nhận',
+            );
+          }
+        }
+      }
       final scanGuidance = reliableReference == null
           ? _createDefaultScanGuidance()
           : _createLayoutScanGuidance(reliableReference);
@@ -1358,37 +1819,70 @@ window.resetNavigationCamera = resetCamera;
         setState(() => _lastGuidance = scanGuidance);
       }
       await _speak(scanGuidance, restartListening: false);
+      _scanRotationDegrees += _lastScanRotationDegrees;
+      print(
+        '🧭 Quét ảnh: đã yêu cầu xoay tổng cộng $_scanRotationDegrees độ',
+      );
       await Future.delayed(const Duration(seconds: 3));
       await _captureAndContinueNavigation();
       return;
     }
+  }
 
-    await _startMovementToDetectedTarget(found);
+  Future<void> _stopNavigationBecauseScanCompleted(String objectName) async {
+    _isNavigationActive = false;
+    _awaitingMovementConfirmation = false;
+    _awaitingReadyForMovement = false;
+    _hasAskedReadyForMovement = false;
+    _movementGuidanceStarted = false;
+    _pendingTargetDetection = null;
+    _lastLowConfidenceTargetDetection = null;
+    _lastLowConfidenceImagePath = null;
+    _lastSuggestedStepCount = null;
+    _scanRotationDegrees = 0;
+    _lastScanRotationDegrees = 0;
+    if (mounted) {
+      setState(() {
+        _lastGuidance =
+            'Không tìm thấy $objectName trong khu vực hiện tại.';
+      });
+    }
+    await _speak(
+      'Tôi vẫn chưa thấy rõ $objectName. Vui lòng xoay nhẹ sang phải khoảng 45 độ, rồi bấm mic để thử lại.',
+      restartListening: false,
+    );
   }
 
   Future<void> _startMovementToDetectedTarget(
     TFLiteDetectionResult found,
   ) async {
     if (_targetObject == null) return;
+    _movementGuidanceStarted = true;
     final objectName = ObjectMappingService.getVietnameseName(_targetObject!);
     if (_isTargetCloseEnough(found)) {
+      final closeGuidance = _createCloseReachGuidance(found, objectName);
       _isNavigationActive = false;
       _awaitingMovementConfirmation = false;
       _awaitingReadyForMovement = false;
       _hasAskedReadyForMovement = false;
+      _movementGuidanceStarted = false;
       _pendingTargetDetection = null;
+      _lastLowConfidenceTargetDetection = null;
+      _lastLowConfidenceImagePath = null;
+      _scanRotationDegrees = 0;
+      _lastScanRotationDegrees = 0;
       if (mounted) {
         setState(() {
           _targetObject = null;
           _navigationStepCount = 0;
-          _lastGuidance =
-              '$objectName đã ở rất gần. Hãy đưa tay lại gần phía trước để tìm vật.';
+          _lastSuggestedStepCount = null;
+          _lastGuidance = closeGuidance;
           _recognizedText = 'Đã thoát trạng thái tìm vật';
         });
         _syncTargetMarkerToScene();
       }
       await _speak(
-        'Tôi đã thấy $objectName ở rất gần. Hãy dừng lại, đưa tay lại gần phía trước để tìm vật. Tôi sẽ thoát trạng thái tìm vật. Nếu cần tìm vật khác, hãy bật mic để tôi hỗ trợ.',
+        '$closeGuidance Tôi sẽ thoát trạng thái tìm vật. Nếu cần tìm vật khác, hãy bật mic để tôi hỗ trợ.',
         restartListening: false,
       );
       return;
@@ -1715,6 +2209,26 @@ window.resetNavigationCamera = resetCamera;
 
     _hasHandledCurrentSpeech = true;
     _addActivityLog('Người', normalizedCommand);
+
+    if (_isEmergencyStopCommand(normalizedCommand)) {
+      print('📍 STT: lệnh dừng khẩn cấp');
+      _stop();
+      return;
+    }
+
+    if ((_isNavigationActive ||
+            _awaitingReadyForMovement ||
+            _awaitingMovementConfirmation) &&
+        _looksLikeNewSearchCommand(normalizedCommand)) {
+      print('🔄 STT: phát hiện người dùng đổi vật cần tìm');
+      _resetNavigationStateForNewSearch();
+      final canSearch = await _processVoiceCommand(normalizedCommand);
+      if (canSearch) {
+        await _runAutomaticSearch();
+      }
+      return;
+    }
+
     if (_awaitingReadyForMovement) {
       await _handleReadyForMovement(normalizedCommand);
       return;
@@ -1729,6 +2243,39 @@ window.resetNavigationCamera = resetCamera;
     if (canSearch) {
       await _runAutomaticSearch();
     }
+  }
+
+  bool _isEmergencyStopCommand(String command) {
+    final normalized = command.toLowerCase();
+    return normalized.contains('dừng') ||
+        normalized.contains('dung') ||
+        normalized.contains('hủy') ||
+        normalized.contains('huy') ||
+        normalized.contains('thoát') ||
+        normalized.contains('thoat');
+  }
+
+  bool _looksLikeNewSearchCommand(String command) {
+    final normalized = command.toLowerCase();
+    return normalized.contains('tìm') ||
+        normalized.contains('tim') ||
+        normalized.contains('kiếm') ||
+        normalized.contains('kiem');
+  }
+
+  void _resetNavigationStateForNewSearch() {
+    _isNavigationActive = false;
+    _awaitingMovementConfirmation = false;
+    _awaitingReadyForMovement = false;
+    _hasAskedReadyForMovement = false;
+    _movementGuidanceStarted = false;
+    _pendingTargetDetection = null;
+    _lastLowConfidenceTargetDetection = null;
+    _lastLowConfidenceImagePath = null;
+    _navigationStepCount = 0;
+    _lastSuggestedStepCount = null;
+    _scanRotationDegrees = 0;
+    _lastScanRotationDegrees = 0;
   }
   void _scheduleListeningRestart({
     Duration delay = const Duration(milliseconds: 500),
@@ -1831,14 +2378,17 @@ window.resetNavigationCamera = resetCamera;
   Future<bool> _processVoiceCommand(String command) async {
     print('📨 STT: xử lý text được gửi: "$command"');
 
-    final lowerCommand = command.toLowerCase();
-    if (lowerCommand.contains('dừng') || lowerCommand.contains('thoát')) {
+    if (_isEmergencyStopCommand(command)) {
       print('📍 STT: phát hiện lệnh dừng/thoát');
       _isNavigationActive = false;
       _awaitingMovementConfirmation = false;
       _awaitingReadyForMovement = false;
       _hasAskedReadyForMovement = false;
+      _movementGuidanceStarted = false;
       _pendingTargetDetection = null;
+      _lastSuggestedStepCount = null;
+      _scanRotationDegrees = 0;
+      _lastScanRotationDegrees = 0;
       _stop();
       return false;
     }
@@ -1894,7 +2444,13 @@ window.resetNavigationCamera = resetCamera;
     _awaitingMovementConfirmation = false;
     _awaitingReadyForMovement = false;
     _hasAskedReadyForMovement = false;
+    _movementGuidanceStarted = false;
     _pendingTargetDetection = null;
+    _lastLowConfidenceTargetDetection = null;
+    _lastLowConfidenceImagePath = null;
+    _lastSuggestedStepCount = null;
+    _scanRotationDegrees = 0;
+    _lastScanRotationDegrees = 0;
     _speak('Đã dừng ứng dụng');
     Navigator.pop(context);
   }
@@ -2792,4 +3348,3 @@ class RoomNavigationMapPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant RoomNavigationMapPainter oldDelegate) => true;
 }
-
