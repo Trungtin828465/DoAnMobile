@@ -264,6 +264,35 @@ class _RoomLayoutScreenState extends State<RoomLayoutScreen> {
     setState(() => _savingLayout = true);
 
     try {
+      final Object? rawValidation =
+          await _sceneController!.runJavaScriptReturningResult(
+        'JSON.stringify(validateRoomLayout());',
+      );
+      final String validationEncoded = rawValidation.toString();
+      final String validationJson = validationEncoded.startsWith('"')
+          ? jsonDecode(validationEncoded) as String
+          : validationEncoded;
+      final Map<String, dynamic> validationData =
+          jsonDecode(validationJson) as Map<String, dynamic>;
+      if (validationData['valid'] != true) {
+        final List<dynamic> invalidObjects =
+            validationData['invalidObjects'] is List
+                ? validationData['invalidObjects'] as List<dynamic>
+                : const [];
+        final String objectNames = invalidObjects
+            .map((object) => object is Map
+                ? (object['label'] ?? object['type'] ?? '').toString()
+                : object.toString())
+            .where((name) => name.trim().isNotEmpty)
+            .join(', ');
+        _showMessage(
+          objectNames.isEmpty
+              ? 'Cửa và cửa sổ phải nằm dính vào tường trước khi lưu'
+              : '$objectNames phải nằm dính vào tường trước khi lưu',
+        );
+        return;
+      }
+
       final Object? rawResult = await _sceneController!.runJavaScriptReturningResult(
         'JSON.stringify(exportRoomLayout());',
       );
@@ -855,61 +884,22 @@ function keepObjectInsideRoom(object) {
   } else {
     clampVertical(object);
   }
-  if (mustAttachToWall(object)) {
-    attachObjectToNearestWall(object);
-  }
 }
 
 function mustAttachToWall(object) {
   return object && WALL_TYPES.has(object.userData.type);
 }
 
-function attachObjectToNearestWall(object) {
+function isObjectAttachedToWall(object) {
+  if (!mustAttachToWall(object)) return true;
   const halfW = ROOM.width / 2;
   const halfD = ROOM.depth / 2;
-  const distances = [
-    { wall: 'left', value: Math.abs(object.position.x + halfW) },
-    { wall: 'right', value: Math.abs(halfW - object.position.x) },
-    { wall: 'back', value: Math.abs(object.position.z + halfD) },
-    { wall: 'front', value: Math.abs(halfD - object.position.z) },
-  ].sort((a, b) => a.value - b.value);
-
-  const wall = distances[0].wall;
-  const boxBefore = new THREE.Box3().setFromObject(object);
-
-  if (wall === 'left') {
-    object.rotation.y = Math.PI / 2;
-    object.position.x += -halfW - boxBefore.min.x;
-  } else if (wall === 'right') {
-    object.rotation.y = -Math.PI / 2;
-    object.position.x -= boxBefore.max.x - halfW;
-  } else if (wall === 'back') {
-    object.rotation.y = 0;
-    object.position.z += -halfD - boxBefore.min.z;
-  } else {
-    object.rotation.y = Math.PI;
-    object.position.z -= boxBefore.max.z - halfD;
-  }
-
-  const boxAfter = new THREE.Box3().setFromObject(object);
-  const objectHalfW = Math.max(.02, (boxAfter.max.x - boxAfter.min.x) / 2);
-  const objectHalfD = Math.max(.02, (boxAfter.max.z - boxAfter.min.z) / 2);
-  object.position.x = THREE.MathUtils.clamp(
-    object.position.x,
-    -halfW + objectHalfW,
-    halfW - objectHalfW
-  );
-  object.position.z = THREE.MathUtils.clamp(
-    object.position.z,
-    -halfD + objectHalfD,
-    halfD - objectHalfD
-  );
-
-  if (object.userData.type === 'door') {
-    keepOnFloor(object);
-  } else {
-    clampVertical(object);
-  }
+  const tolerance = 0.12;
+  const box = new THREE.Box3().setFromObject(object);
+  return Math.abs(box.min.x + halfW) <= tolerance ||
+    Math.abs(box.max.x - halfW) <= tolerance ||
+    Math.abs(box.min.z + halfD) <= tolerance ||
+    Math.abs(box.max.z - halfD) <= tolerance;
 }
 
 function onPointerDown(event) {
@@ -1004,8 +994,21 @@ function canMoveVertical(object) {
   return object && VERTICAL_TYPES.has(object.userData.type);
 }
 
+function validateRoomLayout() {
+  const invalidObjects = objects
+    .filter(object => mustAttachToWall(object) && !isObjectAttachedToWall(object))
+    .map(object => ({
+      type: object.userData.type,
+      label: OBJECT_LABELS[object.userData.type] || object.userData.type
+    }));
+
+  return {
+    valid: invalidObjects.length === 0,
+    invalidObjects
+  };
+}
+
 function exportRoomLayout() {
-  objects.forEach(object => keepObjectInsideRoom(object));
   return {
     Width: ROOM.width,
     Depth: ROOM.depth,
