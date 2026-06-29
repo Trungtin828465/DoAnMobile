@@ -1,4 +1,5 @@
-﻿import 'dart:convert';
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 
@@ -32,7 +33,7 @@ class VisionVerificationService {
     lastError = null;
     final apiKey = EnvConfig.geminiApiKey;
     if (apiKey.isEmpty) {
-      lastError = 'Thiáº¿u geminiApiKey trong .env';
+      lastError = 'Thi\u1ebfu geminiApiKey trong .env';
       print('Gemini Vision: $lastError');
       return null;
     }
@@ -43,7 +44,7 @@ class VisionVerificationService {
         detection: detection,
       );
       if (cropBase64 == null) {
-        lastError = 'KhÃ´ng crop Ä‘Æ°á»£c vÃ¹ng box Ä‘á»ƒ xÃ¡c minh';
+        lastError = 'Kh\u00f4ng crop \u0111\u01b0\u1ee3c v\u00f9ng box \u0111\u1ec3 x\u00e1c minh';
         print('Gemini Vision: $lastError');
         return null;
       }
@@ -51,7 +52,7 @@ class VisionVerificationService {
       final objectName = ObjectMappingService.getVietnameseName(expectedLabel);
       final confidencePercent = (detection.confidence * 100).toStringAsFixed(0);
       print(
-        'Gemini Vision: xÃ¡c minh crop-box $objectName tá»« TFLite $confidencePercent%',
+        'Gemini Vision: x\u00e1c minh crop-box $objectName t\u1eeb TFLite $confidencePercent%',
       );
 
       final useInteractionsApi =
@@ -88,12 +89,12 @@ class VisionVerificationService {
                     ),
             ),
           )
-          .timeout(const Duration(seconds: 15));
+          .timeout(const Duration(seconds: 30));
 
       if (response.statusCode < 200 || response.statusCode >= 300) {
         lastError =
-            'Lá»—i API status ${response.statusCode}: ${_shortText(response.body)}';
-        print('Gemini Vision: lá»—i status ${response.statusCode}');
+            'L\u1ed7i API status ${response.statusCode}: ${_shortText(response.body)}';
+        print('Gemini Vision: l\u1ed7i status ${response.statusCode}');
         print('Gemini Vision: body ${response.body}');
         return null;
       }
@@ -101,14 +102,14 @@ class VisionVerificationService {
       final body = jsonDecode(response.body) as Map<String, dynamic>;
       final text = _extractResponseText(body);
       if (text == null || text.trim().isEmpty) {
-        lastError = 'Response khÃ´ng cÃ³ text: ${_shortText(response.body)}';
+        lastError = 'Response kh\u00f4ng c\u00f3 text: ${_shortText(response.body)}';
         print('Gemini Vision: $lastError');
         return null;
       }
 
       final jsonText = _extractJsonObject(text);
       if (jsonText == null) {
-        lastError = 'Gemini trả text nhưng không phải JSON: ${_shortText(text)}';
+        lastError = 'Gemini tr\u1ea3 text nh\u01b0ng kh\u00f4ng ph\u1ea3i JSON: ${_shortText(text)}';
         print('Gemini Vision: $lastError');
         return null;
       }
@@ -126,8 +127,13 @@ class VisionVerificationService {
         confidence: confidence,
         reason: reason,
       );
+    } on TimeoutException {
+      lastError =
+          'Gemini ph\u1ea3n h\u1ed3i qu\u00e1 ch\u1eadm sau 30 gi\u00e2y. H\u00e3y th\u1eed ch\u1ee5p l\u1ea1i \u1ea3nh r\u00f5 h\u01a1n ho\u1eb7c ki\u1ec3m tra m\u1ea1ng.';
+      print('Gemini Vision: $lastError');
+      return null;
     } catch (error) {
-      lastError = 'Lá»—i xÃ¡c minh áº£nh: $error';
+      lastError = 'L\u1ed7i x\u00e1c minh \u1ea3nh: $error';
       print('Gemini Vision: $lastError');
       return null;
     }
@@ -320,8 +326,23 @@ class VisionVerificationService {
       width: cropWidth,
       height: cropHeight,
     );
-    final jpg = img.encodeJpg(crop, quality: 85);
+    final optimizedCrop = _resizeCropForGemini(crop);
+    final jpg = img.encodeJpg(optimizedCrop, quality: 70);
     return base64Encode(jpg);
+  }
+
+  img.Image _resizeCropForGemini(img.Image crop) {
+    const maxSide = 384;
+    final longestSide = math.max(crop.width, crop.height);
+    if (longestSide <= maxSide) return crop;
+
+    final scale = maxSide / longestSide;
+    return img.copyResize(
+      crop,
+      width: math.max(1, (crop.width * scale).round()),
+      height: math.max(1, (crop.height * scale).round()),
+      interpolation: img.Interpolation.average,
+    );
   }
 
   double _readDouble(dynamic value) {
@@ -345,4 +366,3 @@ class VisionVerificationService {
     return '${compact.substring(0, 240)}...';
   }
 }
-

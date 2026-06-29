@@ -789,8 +789,35 @@ window.resetNavigationCamera = resetCamera;
   double get _roomDepthMeters => _readRoomDouble('Depth', 3);
 
   TFLiteDetectionResult? _bestLayoutDetection(
-    List<TFLiteDetectionResult> detections,
-  ) {
+    List<TFLiteDetectionResult> detections, {
+    String? preferredLabel,
+  }) {
+    if (preferredLabel != null) {
+      TFLiteDetectionResult? preferred;
+      for (final detection in detections) {
+        if (detection.label != preferredLabel) continue;
+        if (detection.confidence < _layoutReferenceThreshold) continue;
+        if (_findLayoutObject(detection.label) == null) continue;
+        if (preferred == null || detection.confidence > preferred.confidence) {
+          preferred = detection;
+        }
+      }
+
+      if (preferred != null) {
+        final objectName =
+            ObjectMappingService.getVietnameseName(preferred.label);
+        final percent = (preferred.confidence * 100).toStringAsFixed(0);
+        print(
+          '🗺️ Layout map: ưu tiên vật đích $objectName $percent% để định vị',
+        );
+        _addActivityLog(
+          'Layout',
+          'Ưu tiên $objectName $percent% vì đây là vật cần tìm.',
+        );
+        return preferred;
+      }
+    }
+
     TFLiteDetectionResult? best;
     for (final detection in detections) {
       if (detection.confidence < _layoutReferenceThreshold) continue;
@@ -1558,13 +1585,6 @@ window.resetNavigationCamera = resetCamera;
       });
       _addActivityLog('Detect', _createDetectionLog(result.detections));
 
-      final mapReference = _bestLayoutDetection(result.detections);
-      if (mapReference != null) {
-        _updateEstimatedUserPosition(mapReference);
-      } else {
-        print('🗺️ Layout map: chưa có vật detect đủ tin cậy để định vị');
-      }
-
       if (_targetObject != null && result.detections.isNotEmpty) {
         final found = _bestTargetDetectionInRange(
           result.detections,
@@ -1603,6 +1623,14 @@ window.resetNavigationCamera = resetCamera;
               _lastGuidance =
                   'Có thể đã thấy $objectName nhưng độ tin cậy còn thấp.';
             });
+            final mapReference = _bestLayoutDetection(
+              result.detections,
+              preferredLabel: lowConfidenceTarget.label,
+            );
+            if (mapReference != null) {
+              _updateEstimatedUserPosition(mapReference);
+            }
+            return null;
           } else {
             print(
               '⚠️ Detect local: bỏ qua $objectName $percent% vì không có trong layout',
@@ -1618,6 +1646,13 @@ window.resetNavigationCamera = resetCamera;
                 'Đã detect ảnh nhưng chưa thấy rõ vật mục tiêu với độ tin cậy từ 10% trở lên';
           });
         }
+      }
+
+      final mapReference = _bestLayoutDetection(result.detections);
+      if (mapReference != null) {
+        _updateEstimatedUserPosition(mapReference);
+      } else {
+        print('🗺️ Layout map: chưa có vật detect đủ tin cậy để định vị');
       }
       return null;
     } catch (e) {
@@ -2459,9 +2494,18 @@ window.resetNavigationCamera = resetCamera;
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (!_isCameraInitialized) return;
     if (state == AppLifecycleState.paused) {
-      print('❌ Camera: lỗi khởi tạo: ');
+      print('ℹ️ App: tạm rời màn hình, giữ trạng thái camera/TTS');
+      if (_isTtsInitialized) {
+        _ttsApi.stop();
+      }
+      if (_activeTask == _CameraTask.speaking) {
+        _activeTask = _CameraTask.idle;
+      }
     } else if (state == AppLifecycleState.resumed) {
-      print('❌ Camera: lỗi khởi tạo: ');
+      print('ℹ️ App: quay lại màn hình, kiểm tra lại TTS');
+      if (_isTtsInitialized) {
+        _ttsApi = TTSApiService();
+      }
     }
   }
 

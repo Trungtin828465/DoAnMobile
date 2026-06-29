@@ -624,6 +624,7 @@ const OBJECT_SIZE = {
   laptop: .45, washing_machine: .85
 };
 const VERTICAL_TYPES = new Set(['window', 'tv', 'laptop']);
+const WALL_TYPES = new Set(['door', 'window']);
 
 let scene, camera, renderer, orbitControls, transformControls, loader;
 let selected = null;
@@ -854,6 +855,61 @@ function keepObjectInsideRoom(object) {
   } else {
     clampVertical(object);
   }
+  if (mustAttachToWall(object)) {
+    attachObjectToNearestWall(object);
+  }
+}
+
+function mustAttachToWall(object) {
+  return object && WALL_TYPES.has(object.userData.type);
+}
+
+function attachObjectToNearestWall(object) {
+  const halfW = ROOM.width / 2;
+  const halfD = ROOM.depth / 2;
+  const distances = [
+    { wall: 'left', value: Math.abs(object.position.x + halfW) },
+    { wall: 'right', value: Math.abs(halfW - object.position.x) },
+    { wall: 'back', value: Math.abs(object.position.z + halfD) },
+    { wall: 'front', value: Math.abs(halfD - object.position.z) },
+  ].sort((a, b) => a.value - b.value);
+
+  const wall = distances[0].wall;
+  const boxBefore = new THREE.Box3().setFromObject(object);
+
+  if (wall === 'left') {
+    object.rotation.y = Math.PI / 2;
+    object.position.x += -halfW - boxBefore.min.x;
+  } else if (wall === 'right') {
+    object.rotation.y = -Math.PI / 2;
+    object.position.x -= boxBefore.max.x - halfW;
+  } else if (wall === 'back') {
+    object.rotation.y = 0;
+    object.position.z += -halfD - boxBefore.min.z;
+  } else {
+    object.rotation.y = Math.PI;
+    object.position.z -= boxBefore.max.z - halfD;
+  }
+
+  const boxAfter = new THREE.Box3().setFromObject(object);
+  const objectHalfW = Math.max(.02, (boxAfter.max.x - boxAfter.min.x) / 2);
+  const objectHalfD = Math.max(.02, (boxAfter.max.z - boxAfter.min.z) / 2);
+  object.position.x = THREE.MathUtils.clamp(
+    object.position.x,
+    -halfW + objectHalfW,
+    halfW - objectHalfW
+  );
+  object.position.z = THREE.MathUtils.clamp(
+    object.position.z,
+    -halfD + objectHalfD,
+    halfD - objectHalfD
+  );
+
+  if (object.userData.type === 'door') {
+    keepOnFloor(object);
+  } else {
+    clampVertical(object);
+  }
 }
 
 function onPointerDown(event) {
@@ -949,6 +1005,7 @@ function canMoveVertical(object) {
 }
 
 function exportRoomLayout() {
+  objects.forEach(object => keepObjectInsideRoom(object));
   return {
     Width: ROOM.width,
     Depth: ROOM.depth,
