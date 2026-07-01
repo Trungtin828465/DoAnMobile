@@ -27,11 +27,18 @@ class EnvConfig {
   }
 
   static String get geminiVisionModel {
-    return dotenv.env['geminiVisionModel'] ?? 'gemini-3.5-flash';
+    final model = dotenv.env['geminiVisionModel']?.trim();
+    if (model == null ||
+        model.isEmpty ||
+        model == 'gemini-3.5-flash' ||
+        model == 'google/gemini-2.0-flash-001') {
+      return 'google/gemini-2.5-flash';
+    }
+    return model;
   }
 
   static String get geminiApiUrl {
     return dotenv.env['geminiApiUrl'] ??
-        'https://generativelanguage.googleapis.com/v1beta/interactions';
+        'https://openrouter.ai/api/v1/chat/completions';
   }
 }

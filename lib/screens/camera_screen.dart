@@ -61,6 +61,8 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   bool _awaitingReadyForMovement = false;
   bool _hasAskedReadyForMovement = false;
   bool _movementGuidanceStarted = false;
+  bool _hasAddedFinalTableApproachStep = false;
+  bool _hasAddedFinalLaptopApproachStep = false;
   bool _hasHandledCurrentSpeech = false;
   _CameraTask _activeTask = _CameraTask.idle;
   String? _targetObject;
@@ -75,6 +77,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   Size? _lastImageSize;
   List<TFLiteDetectionResult> _lastDetections = [];
   TFLiteDetectionResult? _pendingTargetDetection;
+  TFLiteDetectionResult? _lastConfirmedTargetDetection;
   TFLiteDetectionResult? _lastLowConfidenceTargetDetection;
   Map<String, dynamic>? _activeRoomLayout;
   String? _lastLowConfidenceImagePath;
@@ -922,6 +925,10 @@ window.resetNavigationCamera = resetCamera;
   }
 
   String _handleObjectFound(TFLiteDetectionResult detection) {
+    if (detection.label == _targetObject) {
+      _lastConfirmedTargetDetection = detection;
+    }
+
     final sourceSize = _lastImageSize ?? MediaQuery.of(context).size;
     final zone = GuidanceService.analyzeHorizontalPosition(
       detection.centerX,
@@ -1026,6 +1033,17 @@ window.resetNavigationCamera = resetCamera;
     final widthRatio = detection.width / sourceSize.width;
     final heightRatio = detection.height / sourceSize.height;
 
+    if (detection.label == 'laptop') {
+      return _isLaptopCloseEnough(
+        detection: detection,
+        sourceSize: sourceSize,
+        zone: zone,
+        areaRatio: areaRatio,
+        widthRatio: widthRatio,
+        heightRatio: heightRatio,
+      );
+    }
+
     final isNearByEdge = (_isDetectionAtBottomEdge(detection, sourceSize) ||
             _isDetectionAtTopEdge(detection, sourceSize)) &&
         areaRatio >= 0.24 &&
@@ -1049,6 +1067,33 @@ window.resetNavigationCamera = resetCamera;
     return zone == ScreenZone.center &&
         areaRatio >= 0.30 &&
         (widthRatio >= 0.55 || heightRatio >= 0.65);
+  }
+
+  bool _isLaptopCloseEnough({
+    required TFLiteDetectionResult detection,
+    required Size sourceSize,
+    required ScreenZone zone,
+    required double areaRatio,
+    required double widthRatio,
+    required double heightRatio,
+  }) {
+    final centerYRatio = detection.centerY / sourceSize.height;
+    final isAtUsefulEdge = _isDetectionAtBottomEdge(detection, sourceSize) ||
+        _isDetectionAtTopEdge(detection, sourceSize);
+    final isCloseByArea = areaRatio >= 0.16;
+    final isCloseByPartialView =
+        isAtUsefulEdge && areaRatio >= 0.08 && widthRatio >= 0.34;
+    final isCloseOnTableLevel =
+        zone == ScreenZone.center && centerYRatio >= 0.42 && areaRatio >= 0.10;
+
+    final isClose =
+        isCloseByArea || isCloseByPartialView || isCloseOnTableLevel;
+    if (isClose) {
+      print(
+        '✅ Điều hướng laptop: dùng ngưỡng riêng cho vật nhỏ, coi là gần area=${areaRatio.toStringAsFixed(3)}, width=${widthRatio.toStringAsFixed(2)}, height=${heightRatio.toStringAsFixed(2)}, centerY=${centerYRatio.toStringAsFixed(2)}',
+      );
+    }
+    return isClose;
   }
 
   String _createMovementStepText(
@@ -1129,11 +1174,15 @@ window.resetNavigationCamera = resetCamera;
     Size sourceSize,
   ) {
     final areaRatio = detection.area / (sourceSize.width * sourceSize.height);
-    final rawStepCount = areaRatio < 0.06
-        ? 3
-        : areaRatio < 0.14
+    final rawStepCount = detection.label == 'laptop'
+        ? areaRatio < 0.05
             ? 2
-            : 1;
+            : 1
+        : areaRatio < 0.06
+            ? 3
+            : areaRatio < 0.14
+                ? 2
+                : 1;
     final cappedStepCount = _lastSuggestedStepCount == null
         ? rawStepCount
         : math.min(rawStepCount, _lastSuggestedStepCount!);
@@ -1154,6 +1203,18 @@ window.resetNavigationCamera = resetCamera;
   ) {
     final sourceSize = _lastImageSize ?? MediaQuery.of(context).size;
 
+    if (detection.label == 'laptop') {
+      if (_isDetectionAtBottomEdge(detection, sourceSize)) {
+        return '$objectName đã ở rất gần và nằm thấp trong khung hình. Hãy dừng lại, đưa tay thật chậm xuống mặt bàn hoặc mặt kệ phía trước để dò laptop.';
+      }
+
+      if (_isDetectionAtTopEdge(detection, sourceSize)) {
+        return '$objectName đã ở rất gần nhưng nằm cao trong khung hình. Hãy dừng lại, đưa tay chậm lên mặt bàn hoặc kệ phía trước, không với quá nhanh.';
+      }
+
+      return '$objectName đã ở gần. Hãy dừng lại, đưa tay chậm lên mặt bàn hoặc mặt phẳng phía trước để dò laptop.';
+    }
+
     if (_isDetectionAtBottomEdge(detection, sourceSize)) {
       return '$objectName đã ở rất gần và nằm thấp phía trước. Hãy dừng lại, hạ tay xuống thấp và dò thật chậm để tìm vật.';
     }
@@ -1171,6 +1232,18 @@ window.resetNavigationCamera = resetCamera;
   ) {
     final sourceSize = _lastImageSize ?? MediaQuery.of(context).size;
     final centerRatio = detection.centerY / sourceSize.height;
+
+    if (detection.label == 'laptop') {
+      if (centerRatio >= 0.66) {
+        return '$objectName nằm thấp trong khung hình, có thể đang ở mép bàn hoặc gần phía dưới camera. Khi đến gần, hãy hạ tay chậm xuống mặt bàn để dò.';
+      }
+
+      if (centerRatio <= 0.34) {
+        return '$objectName nằm cao trong khung hình, có thể đang ở trên kệ hoặc mặt bàn cao. Khi đến gần, hãy đưa tay lên chậm và dò mặt phẳng phía trước.';
+      }
+
+      return '$objectName đang ở khoảng giữa khung hình. Laptop thường nằm trên bàn hoặc kệ, hãy đưa tay chậm về mặt phẳng phía trước để dò.';
+    }
 
     if (centerRatio >= 0.66) {
       return '$objectName đang nằm ở phía dưới khung hình. Khi đến gần, hãy hạ tay xuống thấp và dò chậm phía dưới để lấy hoặc chạm vào vật.';
@@ -1338,7 +1411,7 @@ window.resetNavigationCamera = resetCamera;
     final candidatePercent =
         (lowDetection.confidence * 100).toStringAsFixed(0);
     _addActivityLog(
-      'Gemini',
+      'OpenRouter',
       'Gửi crop-box $objectName $candidatePercent% để xác minh.',
     );
 
@@ -1351,14 +1424,14 @@ window.resetNavigationCamera = resetCamera;
 
     if (isConfirmed) {
       print(
-        '✅ Gemini Vision: xác nhận $objectName từ box TFLite thấp $candidatePercent%',
+        '✅ OpenRouter Vision: xác nhận $objectName từ box TFLite thấp $candidatePercent%',
       );
       _handleObjectFound(lowDetection);
       return lowDetection;
     }
 
     _addActivityLog(
-      'Gemini',
+      'OpenRouter',
       'Không xác nhận crop-box là $objectName. Bỏ qua box nghi ngờ.',
     );
     return null;
@@ -1372,10 +1445,10 @@ window.resetNavigationCamera = resetCamera;
   }) async {
     if (!_canVerifyLabelWithGemini(expectedLabel)) {
       print(
-        '⚠️ Gemini: bỏ qua crop-box $logName vì label không có trong layout',
+        '⚠️ OpenRouter: bỏ qua crop-box $logName vì label không có trong layout',
       );
       _addActivityLog(
-        'Gemini',
+        'OpenRouter',
         'Bỏ qua $logName vì vật này không có trong layout.',
       );
       return false;
@@ -1390,7 +1463,7 @@ window.resetNavigationCamera = resetCamera;
     if (result == null) {
       final errorDetail = _visionVerificationService.lastError;
       _addActivityLog(
-        'Gemini',
+        'OpenRouter',
         errorDetail == null || errorDetail.isEmpty
             ? 'Chưa xác minh được crop-box $logName. Bỏ qua để tránh xử lý sai.'
             : 'Chưa xác minh được crop-box $logName. Lỗi: $errorDetail',
@@ -1398,19 +1471,157 @@ window.resetNavigationCamera = resetCamera;
       return false;
     }
 
-    final geminiPercent = (result.confidence * 100).toStringAsFixed(0);
+    final openRouterPercent = (result.confidence * 100).toStringAsFixed(0);
     final tflitePercent = (detection.confidence * 100).toStringAsFixed(0);
     final reasonText = result.reason.trim().isEmpty
         ? ''
         : ' Lý do: ${result.reason.trim()}.';
     final isConfirmed = result.isCorrect && result.confidence >= 0.55;
     _addActivityLog(
-      'Gemini',
+      'OpenRouter',
       isConfirmed
-          ? 'Xác nhận crop-box $logName: đúng. TFLite $tflitePercent%, Gemini $geminiPercent%.$reasonText'
-          : 'Xác nhận crop-box $logName: chưa đủ chắc. TFLite $tflitePercent%, Gemini $geminiPercent%.$reasonText',
+          ? 'Xác nhận crop-box $logName: đúng. TFLite $tflitePercent%, OpenRouter $openRouterPercent%.$reasonText'
+          : 'Xác nhận crop-box $logName: chưa đủ chắc. TFLite $tflitePercent%, OpenRouter $openRouterPercent%.$reasonText',
     );
     return isConfirmed;
+  }
+
+  Future<bool> _handleMissingTargetDuringMovement(String objectName) async {
+    final imagePath = _lastCapturedImagePath;
+    if (imagePath == null || _targetObject == null) return false;
+
+    _addActivityLog(
+      'OpenRouter',
+      'TFLite tạm mất box $objectName trong lúc đang di chuyển, kiểm tra lại toàn ảnh.',
+    );
+
+    final result = await _visionVerificationService.verifyTargetInFullImage(
+      imageFile: File(imagePath),
+      expectedLabel: _targetObject!,
+    );
+
+    if (!mounted || !_isNavigationActive || _targetObject == null) {
+      return true;
+    }
+
+    if (result != null && result.isCorrect && result.confidence >= 0.5) {
+      final percent = (result.confidence * 100).toStringAsFixed(0);
+      final previousTargetPercent = _lastConfirmedTargetDetection == null
+          ? null
+          : (_lastConfirmedTargetDetection!.confidence * 100)
+              .toStringAsFixed(0);
+      final reasonText = result.reason.trim().isEmpty
+          ? ''
+          : ' Lý do: ${result.reason.trim()}.';
+      _addActivityLog(
+        'OpenRouter',
+        previousTargetPercent == null
+            ? 'Xác nhận toàn ảnh vẫn có $objectName ($percent%).$reasonText'
+            : 'Xác nhận toàn ảnh vẫn có $objectName ($percent%). Box mục tiêu gần nhất trước đó $previousTargetPercent%.$reasonText',
+      );
+
+      if (_targetObject == 'laptop') {
+        final guidance =
+            '$objectName đã ở rất gần, nhưng mô hình local không vẽ đúng box vì camera đang quá sát hoặc vật bị cắt khung hình. '
+            'Hãy dừng lại, đưa tay thật chậm lên mặt bàn hoặc mặt kệ phía trước để dò laptop. '
+            'Tôi sẽ thoát trạng thái tìm vật.';
+        _isNavigationActive = false;
+        _awaitingMovementConfirmation = false;
+        _awaitingReadyForMovement = false;
+        _hasAskedReadyForMovement = false;
+        _movementGuidanceStarted = false;
+        _hasAddedFinalTableApproachStep = false;
+        _hasAddedFinalLaptopApproachStep = false;
+        _pendingTargetDetection = null;
+        _lastConfirmedTargetDetection = null;
+        _lastLowConfidenceTargetDetection = null;
+        _lastLowConfidenceImagePath = null;
+        _lastSuggestedStepCount = null;
+        _scanRotationDegrees = 0;
+        _lastScanRotationDegrees = 0;
+        if (mounted) {
+          setState(() {
+            _targetObject = null;
+            _navigationStepCount = 0;
+            _lastGuidance = guidance;
+            _recognizedText = 'Đã thoát trạng thái tìm vật';
+          });
+          _syncTargetMarkerToScene();
+        }
+        await _speak(
+          '$guidance Nếu cần tìm vật khác, hãy bật mic để tôi hỗ trợ.',
+          restartListening: false,
+        );
+        return true;
+      }
+
+      final guidance =
+          'Tôi vẫn xác nhận thấy $objectName, nhưng mô hình chưa vẽ được box rõ. '
+          'Hãy giữ hướng hiện tại, tiến một bước nhỏ thật chậm và đưa camera nhẹ lên xuống để lấy rõ vật. '
+          'Sau khi làm xong, hãy nói: đã xong.';
+      if (mounted) {
+        setState(() => _lastGuidance = guidance);
+      }
+      await _speakAndWaitForMovement(guidance);
+      return true;
+    }
+
+    final errorDetail = _visionVerificationService.lastError;
+    _addActivityLog(
+      'OpenRouter',
+      errorDetail == null || errorDetail.isEmpty
+          ? 'Chưa xác nhận được toàn ảnh có $objectName.'
+          : 'Chưa xác nhận được toàn ảnh có $objectName. Lỗi: $errorDetail',
+    );
+
+    if (_targetObject == 'laptop' && _isLikelyVeryCloseToLaptopFrame()) {
+      final guidance =
+          '$objectName có thể đang ở rất gần hoặc bị cắt khỏi khung hình, nên mô hình chưa nhận ra chính xác. '
+          'Hãy dừng lại, đưa tay thật chậm lên mặt bàn hoặc mặt kệ phía trước để dò laptop. '
+          'Nếu đã chạm được vật, hãy bật mic và nói: tôi thấy vật rồi.';
+      if (mounted) {
+        setState(() => _lastGuidance = guidance);
+      }
+      _addActivityLog(
+        'Điều hướng',
+        'Laptop có dấu hiệu quá gần/cắt khung hình, ưu tiên hướng dẫn dò tại chỗ thay vì báo còn xa.',
+      );
+      await _speakAndWaitForMovement(guidance);
+      return true;
+    }
+
+    final guidance =
+        'Tôi chưa thấy rõ $objectName trong ảnh mới. Có thể bạn đang đứng quá gần, camera bị lệch hoặc vật bị cắt khỏi khung hình. '
+        'Hãy giữ nguyên vị trí, lùi nhẹ nửa bước nếu an toàn, rồi đưa camera chậm lên xuống để lấy trọn vật. '
+        'Sau khi làm xong, hãy nói: đã xong.';
+    if (mounted) {
+      setState(() => _lastGuidance = guidance);
+    }
+    await _speakAndWaitForMovement(guidance);
+    return true;
+  }
+
+  bool _isLikelyVeryCloseToLaptopFrame() {
+    final imageSize = _lastImageSize;
+    if (imageSize == null || _lastDetections.isEmpty) return false;
+
+    for (final detection in _lastDetections) {
+      final areaRatio = detection.area / (imageSize.width * imageSize.height);
+      final widthRatio = detection.width / imageSize.width;
+      final heightRatio = detection.height / imageSize.height;
+      final touchesEdge = detection.x <= imageSize.width * 0.04 ||
+          detection.y <= imageSize.height * 0.04 ||
+          detection.x + detection.width >= imageSize.width * 0.96 ||
+          detection.y + detection.height >= imageSize.height * 0.96;
+      if (areaRatio >= 0.22 || widthRatio >= 0.70 || heightRatio >= 0.58) {
+        return true;
+      }
+      if (touchesEdge && areaRatio >= 0.12) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   Future<void> _handleConfirmedTargetDuringNavigation(
@@ -1613,11 +1824,11 @@ window.resetNavigationCamera = resetCamera;
             _lastLowConfidenceTargetDetection = lowConfidenceTarget;
             _lastLowConfidenceImagePath = image.path;
             print(
-              '⚠️ Detect local: nghi ngờ $objectName $percent%, có trong layout nên cần Gemini xác minh crop-box',
+              '⚠️ Detect local: nghi ngờ $objectName $percent%, có trong layout nên cần OpenRouter xác minh crop-box',
             );
             _addActivityLog(
               'Detect',
-              'Nghi ngờ $objectName $percent%, chờ Gemini xác minh crop-box.',
+              'Nghi ngờ $objectName $percent%, chờ OpenRouter xác minh crop-box.',
             );
             setState(() {
               _lastGuidance =
@@ -1689,7 +1900,10 @@ window.resetNavigationCamera = resetCamera;
     _awaitingReadyForMovement = false;
     _hasAskedReadyForMovement = false;
     _movementGuidanceStarted = false;
+    _hasAddedFinalTableApproachStep = false;
+    _hasAddedFinalLaptopApproachStep = false;
     _pendingTargetDetection = null;
+    _lastConfirmedTargetDetection = null;
     _lastLowConfidenceTargetDetection = null;
     _lastLowConfidenceImagePath = null;
     _navigationStepCount = 0;
@@ -1731,7 +1945,10 @@ window.resetNavigationCamera = resetCamera;
       _awaitingReadyForMovement = false;
       _hasAskedReadyForMovement = false;
       _movementGuidanceStarted = false;
+      _hasAddedFinalTableApproachStep = false;
+      _hasAddedFinalLaptopApproachStep = false;
       _pendingTargetDetection = null;
+      _lastConfirmedTargetDetection = null;
       _lastLowConfidenceTargetDetection = null;
       _lastLowConfidenceImagePath = null;
       _lastSuggestedStepCount = null;
@@ -1768,6 +1985,12 @@ window.resetNavigationCamera = resetCamera;
           'Đang trong lộ trình, vẫn bám theo $detectedName $percent%.',
         );
         await _handleConfirmedTargetDuringNavigation(lowConfidenceTarget);
+        return;
+      }
+
+      final handledByVisionFallback =
+          await _handleMissingTargetDuringMovement(objectName);
+      if (handledByVisionFallback) {
         return;
       }
     } else {
@@ -1819,7 +2042,7 @@ window.resetNavigationCamera = resetCamera;
           final seenPercent =
               (lowReference.confidence * 100).toStringAsFixed(0);
           _addActivityLog(
-            'Gemini',
+            'OpenRouter',
             'Gửi crop-box $seenName $seenPercent% để xác minh vật mốc layout.',
           );
           final isReferenceConfirmed = await _verifyDetectionWithGemini(
@@ -1832,7 +2055,7 @@ window.resetNavigationCamera = resetCamera;
             reliableReference = lowReference;
           } else {
             print(
-              '⚠️ Layout: bỏ qua vật mốc ${lowReference.label} vì Gemini không xác nhận',
+              '⚠️ Layout: bỏ qua vật mốc ${lowReference.label} vì OpenRouter không xác nhận',
             );
           }
         }
@@ -1870,7 +2093,10 @@ window.resetNavigationCamera = resetCamera;
     _awaitingReadyForMovement = false;
     _hasAskedReadyForMovement = false;
     _movementGuidanceStarted = false;
+    _hasAddedFinalTableApproachStep = false;
+    _hasAddedFinalLaptopApproachStep = false;
     _pendingTargetDetection = null;
+    _lastConfirmedTargetDetection = null;
     _lastLowConfidenceTargetDetection = null;
     _lastLowConfidenceImagePath = null;
     _lastSuggestedStepCount = null;
@@ -1895,13 +2121,73 @@ window.resetNavigationCamera = resetCamera;
     _movementGuidanceStarted = true;
     final objectName = ObjectMappingService.getVietnameseName(_targetObject!);
     if (_isTargetCloseEnough(found)) {
+      if (_targetObject == 'table' && !_hasAddedFinalTableApproachStep) {
+        _hasAddedFinalTableApproachStep = true;
+        final tableGuidance =
+            '$objectName đã nằm rất rõ trong khung hình, nhưng thực tế có thể vẫn còn cách khoảng hai bước nhỏ. '
+            'Chặng cuối này hãy tiến nhẹ hai bước thật chậm, giữ tay phía trước để dò cạnh bàn. '
+            'Sau hai bước thì dừng lại và đưa tay dò cạnh bàn thật chậm. Tôi sẽ thoát trạng thái tìm vật.';
+        _isNavigationActive = false;
+        _awaitingMovementConfirmation = false;
+        _awaitingReadyForMovement = false;
+        _hasAskedReadyForMovement = false;
+        _movementGuidanceStarted = false;
+        _hasAddedFinalTableApproachStep = false;
+        _hasAddedFinalLaptopApproachStep = false;
+        _pendingTargetDetection = null;
+        _lastConfirmedTargetDetection = null;
+        _lastLowConfidenceTargetDetection = null;
+        _lastLowConfidenceImagePath = null;
+        _scanRotationDegrees = 0;
+        _lastScanRotationDegrees = 0;
+        if (mounted) {
+          setState(() {
+            _targetObject = null;
+            _navigationStepCount = 0;
+            _lastSuggestedStepCount = null;
+            _lastGuidance = tableGuidance;
+            _recognizedText = 'Đã thoát trạng thái tìm vật';
+          });
+          _syncTargetMarkerToScene();
+        }
+        _addActivityLog(
+          'Điều hướng',
+          'Bàn có box lớn nhưng thực tế thường còn cách một đoạn, thêm chặng cuối 2 bước rồi kết thúc nhiệm vụ.',
+        );
+        await _speak(
+          '$tableGuidance Nếu cần tìm vật khác, hãy bật mic để tôi hỗ trợ.',
+          restartListening: false,
+        );
+        return;
+      }
+
+      if (_targetObject == 'laptop' && !_hasAddedFinalLaptopApproachStep) {
+        _hasAddedFinalLaptopApproachStep = true;
+        final laptopGuidance =
+            '$objectName là vật nhỏ nên tôi sẽ căn chỉnh thêm một chặng cuối. '
+            'Hãy tiến nhẹ một bước rất nhỏ, giữ tay phía trước. Nếu phía trước là mặt bàn hoặc kệ, hãy đưa tay thật chậm lên mặt phẳng đó để dò laptop. '
+            'Sau khi làm xong, hãy nói: đã xong.';
+        if (mounted) {
+          setState(() => _lastGuidance = laptopGuidance);
+        }
+        _addActivityLog(
+          'Điều hướng',
+          'Laptop là vật nhỏ, thêm chặng cuối 1 bước rất nhỏ để căn chỉnh trước khi kết thúc.',
+        );
+        await _speakAndWaitForMovement(laptopGuidance);
+        return;
+      }
+
       final closeGuidance = _createCloseReachGuidance(found, objectName);
       _isNavigationActive = false;
       _awaitingMovementConfirmation = false;
       _awaitingReadyForMovement = false;
       _hasAskedReadyForMovement = false;
       _movementGuidanceStarted = false;
+      _hasAddedFinalTableApproachStep = false;
+      _hasAddedFinalLaptopApproachStep = false;
       _pendingTargetDetection = null;
+      _lastConfirmedTargetDetection = null;
       _lastLowConfidenceTargetDetection = null;
       _lastLowConfidenceImagePath = null;
       _scanRotationDegrees = 0;
@@ -1946,6 +2232,65 @@ window.resetNavigationCamera = resetCamera;
     return _confirmationIntentService.isMovementCompleted(command);
   }
 
+  bool _isUserFoundObjectCommand(String command) {
+    final normalized = command.toLowerCase().trim();
+    return normalized.contains('thấy vật') ||
+        normalized.contains('thay vat') ||
+        normalized.contains('tìm thấy') ||
+        normalized.contains('tim thay') ||
+        normalized.contains('thấy rồi') ||
+        normalized.contains('thay roi') ||
+        normalized.contains('chạm được') ||
+        normalized.contains('cham duoc') ||
+        normalized.contains('sờ thấy') ||
+        normalized.contains('so thay') ||
+        normalized.contains('đụng được') ||
+        normalized.contains('dung duoc') ||
+        normalized.contains('cầm được') ||
+        normalized.contains('cam duoc') ||
+        normalized.contains('lấy được') ||
+        normalized.contains('lay duoc') ||
+        normalized.contains('cảm ơn') ||
+        normalized.contains('cam on');
+  }
+
+  Future<void> _finishNavigationByUserFoundObject() async {
+    final objectName = _targetObject == null
+        ? 'vật'
+        : ObjectMappingService.getVietnameseName(_targetObject!);
+    _isNavigationActive = false;
+    _awaitingMovementConfirmation = false;
+    _awaitingReadyForMovement = false;
+    _hasAskedReadyForMovement = false;
+    _movementGuidanceStarted = false;
+    _hasAddedFinalTableApproachStep = false;
+    _hasAddedFinalLaptopApproachStep = false;
+    _pendingTargetDetection = null;
+    _lastConfirmedTargetDetection = null;
+    _lastLowConfidenceTargetDetection = null;
+    _lastLowConfidenceImagePath = null;
+    _lastSuggestedStepCount = null;
+    _scanRotationDegrees = 0;
+    _lastScanRotationDegrees = 0;
+    if (mounted) {
+      setState(() {
+        _targetObject = null;
+        _navigationStepCount = 0;
+        _lastGuidance = 'Người dùng đã tìm thấy $objectName.';
+        _recognizedText = 'Đã thoát trạng thái tìm vật';
+      });
+      _syncTargetMarkerToScene();
+    }
+    _addActivityLog(
+      'Người dùng',
+      'Người dùng báo đã thấy hoặc chạm được $objectName, kết thúc nhiệm vụ.',
+    );
+    await _speak(
+      'Oke, tôi đã hiểu. Nếu cần tìm vật gì khác, hãy bật mic để tôi hỗ trợ.',
+      restartListening: false,
+    );
+  }
+
   bool _isReadyForMovementCommand(String command) {
     final normalized = command.toLowerCase().trim();
     return normalized.contains('sẵn sàng') ||
@@ -1988,6 +2333,12 @@ window.resetNavigationCamera = resetCamera;
 
   Future<void> _handleMovementConfirmation(String command) async {
     if (!_awaitingMovementConfirmation) return;
+
+    if (_isUserFoundObjectCommand(command)) {
+      print('✅ Người dùng báo đã thấy/chạm được vật: "$command"');
+      await _finishNavigationByUserFoundObject();
+      return;
+    }
 
     final isConfirmed = await _isMovementConfirmation(command);
     print('🤖 Xác nhận hoàn thành chặng: "$command" => $isConfirmed');
@@ -2304,7 +2655,10 @@ window.resetNavigationCamera = resetCamera;
     _awaitingReadyForMovement = false;
     _hasAskedReadyForMovement = false;
     _movementGuidanceStarted = false;
+    _hasAddedFinalTableApproachStep = false;
+    _hasAddedFinalLaptopApproachStep = false;
     _pendingTargetDetection = null;
+    _lastConfirmedTargetDetection = null;
     _lastLowConfidenceTargetDetection = null;
     _lastLowConfidenceImagePath = null;
     _navigationStepCount = 0;
@@ -2480,7 +2834,10 @@ window.resetNavigationCamera = resetCamera;
     _awaitingReadyForMovement = false;
     _hasAskedReadyForMovement = false;
     _movementGuidanceStarted = false;
+    _hasAddedFinalTableApproachStep = false;
+    _hasAddedFinalLaptopApproachStep = false;
     _pendingTargetDetection = null;
+    _lastConfirmedTargetDetection = null;
     _lastLowConfidenceTargetDetection = null;
     _lastLowConfidenceImagePath = null;
     _lastSuggestedStepCount = null;
