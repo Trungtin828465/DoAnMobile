@@ -61,6 +61,35 @@ class ConfirmationIntentService {
     return fallbackResult;
   }
 
+  Future<bool> isObjectFound(String text, {String? targetObjectName}) async {
+    final objectContext = targetObjectName == null || targetObjectName.isEmpty
+        ? 'the target object'
+        : 'the target object "$targetObjectName"';
+    final answer = await _askOpenRouter(
+      systemPrompt:
+          'You classify user intent for an assistive navigation app. '
+          'Answer only YES or NO. '
+          'YES if the user means they have found, touched, reached, grabbed, or can feel $objectContext, '
+          'or if they thank the assistant because the navigation task is complete. '
+          'Accept Vietnamese, English, mixed language, casual wording, and regional wording. '
+          'Examples YES: "tôi thấy laptop rồi", "tôi tìm thấy rồi", "sờ được rồi", '
+          '"chạm được vật rồi", "I found it", "got it", "thank you I found the laptop", '
+          '"cảm ơn tôi thấy nó rồi". '
+          'NO if the user is asking to search for a new object, saying they have not found it, '
+          'asking a question, or the meaning is unclear.',
+      userText: text,
+      purpose: 'phân loại người dùng đã tìm thấy vật',
+    );
+
+    final normalizedAnswer = answer?.trim().toUpperCase() ?? '';
+    if (normalizedAnswer.startsWith('YES')) return true;
+    if (normalizedAnswer.startsWith('NO')) return false;
+
+    final fallbackResult = _localObjectFoundFallback(text);
+    print('OpenRouter: câu trả lời tìm thấy vật không rõ, fallback local = $fallbackResult');
+    return fallbackResult;
+  }
+
   bool _localMovementConfirmationFallback(String text) {
     final normalized = text
         .toLowerCase()
@@ -85,6 +114,40 @@ class ConfirmationIntentService {
         normalized == 'oke' ||
         normalized.contains('ok rồi') ||
         normalized.contains('oke rồi');
+  }
+
+  bool _localObjectFoundFallback(String text) {
+    final normalized = text
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^\p{L}\p{N}\s]', unicode: true), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+
+    if (normalized.contains('chưa') ||
+        normalized.contains('không thấy') ||
+        normalized.contains('khong thay') ||
+        normalized.contains('not found') ||
+        normalized.contains('cannot find')) {
+      return false;
+    }
+
+    return normalized.contains('đã thấy') ||
+        normalized.contains('da thay') ||
+        normalized.contains('thấy rồi') ||
+        normalized.contains('thay roi') ||
+        normalized.contains('tìm thấy') ||
+        normalized.contains('tim thay') ||
+        normalized.contains('tìm được') ||
+        normalized.contains('tim duoc') ||
+        normalized.contains('chạm được') ||
+        normalized.contains('cham duoc') ||
+        normalized.contains('sờ thấy') ||
+        normalized.contains('so thay') ||
+        normalized.contains('cảm ơn') ||
+        normalized.contains('cam on') ||
+        normalized.contains('found it') ||
+        normalized.contains('i found') ||
+        normalized.contains('got it');
   }
 
   Future<String?> _askOpenRouter({

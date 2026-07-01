@@ -2246,38 +2246,14 @@ window.resetNavigationCamera = resetCamera;
     return _confirmationIntentService.isMovementCompleted(command);
   }
 
-  bool _isUserFoundObjectCommand(String command) {
-    final normalized = command.toLowerCase().trim();
-    return normalized.contains('thấy vật') ||
-        normalized.contains('thay vat') ||
-        normalized.contains('đã thấy') ||
-        normalized.contains('da thay') ||
-        normalized.contains('tìm thấy') ||
-        normalized.contains('tim thay') ||
-        normalized.contains('đã tìm thấy') ||
-        normalized.contains('da tim thay') ||
-        normalized.contains('tìm được') ||
-        normalized.contains('tim duoc') ||
-        normalized.contains('đã tìm được') ||
-        normalized.contains('da tim duoc') ||
-        normalized.contains('thấy rồi') ||
-        normalized.contains('thay roi') ||
-        normalized.contains('chạm được') ||
-        normalized.contains('cham duoc') ||
-        normalized.contains('đã chạm') ||
-        normalized.contains('da cham') ||
-        normalized.contains('sờ thấy') ||
-        normalized.contains('so thay') ||
-        normalized.contains('đã sờ') ||
-        normalized.contains('da so') ||
-        normalized.contains('đụng được') ||
-        normalized.contains('dung duoc') ||
-        normalized.contains('cầm được') ||
-        normalized.contains('cam duoc') ||
-        normalized.contains('lấy được') ||
-        normalized.contains('lay duoc') ||
-        normalized.contains('cảm ơn') ||
-        normalized.contains('cam on');
+  Future<bool> _isUserFoundObjectCommand(String command) async {
+    final objectName = _targetObject == null
+        ? null
+        : ObjectMappingService.getVietnameseName(_targetObject!);
+    return _confirmationIntentService.isObjectFound(
+      command,
+      targetObjectName: objectName,
+    );
   }
 
   Future<void> _finishNavigationByUserFoundObject() async {
@@ -2360,7 +2336,7 @@ window.resetNavigationCamera = resetCamera;
   Future<void> _handleMovementConfirmation(String command) async {
     if (!_awaitingMovementConfirmation) return;
 
-    if (_isUserFoundObjectCommand(command)) {
+    if (await _isUserFoundObjectCommand(command)) {
       print('Người dùng báo đã thấy/chạm được vật: "$command"');
       await _finishNavigationByUserFoundObject();
       return;
@@ -2631,7 +2607,7 @@ window.resetNavigationCamera = resetCamera;
     if ((_isNavigationActive ||
             _awaitingReadyForMovement ||
             _awaitingMovementConfirmation) &&
-        _isUserFoundObjectCommand(normalizedCommand)) {
+        (await _isUserFoundObjectCommand(normalizedCommand))) {
       print('STT: người dùng báo đã tìm thấy/chạm được vật');
       await _finishNavigationByUserFoundObject();
       return;
@@ -3784,5 +3760,3 @@ class RoomNavigationMapPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant RoomNavigationMapPainter oldDelegate) => true;
 }
-
-
