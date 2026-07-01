@@ -135,11 +135,11 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
           return;
         }
 
-        print('🎛️ Nút Bluetooth: nhận phím $key, chuyển thành nút mic');
+        print('Nút Bluetooth: nhận phím $key, chuyển thành nút mic');
         _handleHardwareMicButton();
       },
       onError: (error) {
-        print('⚠️ Nút Bluetooth: lỗi lắng nghe phím cứng: $error');
+        print('Nút Bluetooth: lỗi lắng nghe phím cứng: $error');
       },
     );
   }
@@ -148,7 +148,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     final now = DateTime.now();
     if (_lastHardwareMicButtonTime != null &&
         now.difference(_lastHardwareMicButtonTime!).inMilliseconds < 700) {
-      print('⚠️ Nút Bluetooth: bỏ qua do bấm quá nhanh');
+      print('Nút Bluetooth: bỏ qua do bấm quá nhanh');
       return;
     }
 
@@ -185,11 +185,14 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   }
 
   String _createDetectionLog(List<TFLiteDetectionResult> detections) {
-    if (detections.isEmpty) {
+    final visibleDetections =
+        detections.where(_shouldUseDetectionForNavigation).toList();
+
+    if (visibleDetections.isEmpty) {
       return 'Không phát hiện vật nào trong ảnh.';
     }
 
-    return detections
+    return visibleDetections
         .map((detection) {
           final name = ObjectMappingService.getVietnameseName(detection.label);
           final confidence = (detection.confidence * 100).toStringAsFixed(0);
@@ -198,32 +201,36 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
         .join(', ');
   }
 
+  bool _shouldUseDetectionForNavigation(TFLiteDetectionResult detection) {
+    return detection.label != 'door';
+  }
+
   Future<void> _initializeServices() async {
     try {
       print('=== Bắt đầu khởi tạo màn hình camera ===');
 
       await _requestPermissions();
-      print('✅ Đã cấp quyền camera và micro');
+      print('Đã cấp quyền camera và micro');
 
       await _initializeCamera();
-      print('✅ Đã khởi tạo camera');
+      print('Đã khởi tạo camera');
 
       await _initializeSpeechRecognizer();
       if (_isSpeechAvailable) {
-        print('✅ Đã khởi tạo Speech-to-Text');
+        print('Đã khởi tạo Speech-to-Text');
       } else {
-        print('⚠️ STT: thiết bị chưa có dịch vụ nhận diện giọng nói khả dụng');
+        print('STT: thiết bị chưa có dịch vụ nhận diện giọng nói khả dụng');
       }
 
       _ttsApi = TTSApiService();
       _isTtsInitialized = true;
       final healthOk = await _ttsApi.healthCheck();
       if (healthOk) {
-        print('✅ Đã kết nối backend TTS');
+        print('Đã kết nối backend TTS');
       } else {
-        print('⚠️ Chưa kết nối được backend TTS, sẽ thử lại khi đọc');
+        print('Chưa kết nối được backend TTS, sẽ thử lại khi đọc');
       }
-      print('✅ Đã khởi tạo TTS API Service');
+      print('Đã khởi tạo TTS API Service');
 
       await _loadActiveRoomLayout();
       await _initializeNavigationScene();
@@ -234,10 +241,10 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       try {
         await _detectionService.initialize();
         _isDetectionInitialized = true;
-        print('✅ Đã khởi tạo TFLite Detection Service');
+        print('Đã khởi tạo TFLite Detection Service');
       } catch (e) {
         _isDetectionInitialized = false;
-        print('⚠️ Detect local chưa sẵn sàng: $e');
+        print('Detect local chưa sẵn sàng: $e');
       }
 
       print('=== Khởi tạo màn hình camera thành công ===');
@@ -254,7 +261,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
         setState(() {});
       }
     } catch (e) {
-      print('❌ Camera: lỗi khởi tạo: $e');
+      print('Camera: lỗi khởi tạo: $e');
       if (mounted) {
         _speak('Lỗi khởi tạo');
         ScaffoldMessenger.of(context).showSnackBar(
@@ -293,7 +300,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       await _cameraController.initialize();
       _isCameraInitialized = true;
     } catch (e) {
-      print('❌ Camera: lỗi khởi tạo: $e');
+      print('Camera: lỗi khởi tạo: $e');
       rethrow;
     }
   }
@@ -301,14 +308,14 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   Future<void> _loadActiveRoomLayout() async {
     try {
       if (widget.initialRoomLayout.isEmpty) {
-        print('ℹ️ Layout: chưa chọn layout để hỗ trợ camera');
+        print('Layout: chưa chọn layout để hỗ trợ camera');
         return;
       }
 
       _activeRoomLayout = Map<String, dynamic>.from(widget.initialRoomLayout);
       final roomName = (_activeRoomLayout?['RoomName'] ?? 'phòng').toString();
       final objectCount = _layoutObjects.length;
-      print('✅ Layout: đã chọn "$roomName" với $objectCount vật để hỗ trợ camera');
+      print('Layout: đã chọn "$roomName" với $objectCount vật để hỗ trợ camera');
 
       if (mounted) {
         setState(() {
@@ -316,7 +323,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
         });
       }
     } catch (error) {
-      print('⚠️ Layout: lỗi đọc layout đã chọn: $error');
+      print('Layout: lỗi đọc layout đã chọn: $error');
     }
   }
 
@@ -324,7 +331,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     if (_activeRoomLayout == null) return;
 
     try {
-      print('🧭 Layout 3D: đang dựng scene demo điều hướng');
+      print('Layout 3D: đang dựng scene demo điều hướng');
       final modelSources = await _loadNavigationModelSources();
       final controller = WebViewController()
         ..setJavaScriptMode(JavaScriptMode.unrestricted)
@@ -336,7 +343,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
               _syncTargetMarkerToScene();
               _syncUserMarkerToScene();
               if (mounted) setState(() {});
-              print('✅ Layout 3D: đã render scene điều hướng');
+              print('Layout 3D: đã render scene điều hướng');
             },
           ),
         );
@@ -354,7 +361,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
         ),
       );
     } catch (error) {
-      print('⚠️ Layout 3D: lỗi dựng scene điều hướng: $error');
+      print('Layout 3D: lỗi dựng scene điều hướng: $error');
     }
   }
 
@@ -366,7 +373,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
         sources[entry.key] =
             'data:model/gltf-binary;base64,${base64Encode(data.buffer.asUint8List())}';
       } catch (error) {
-        print('⚠️ Layout 3D: không load được model ${entry.key}: $error');
+        print('Layout 3D: không load được model ${entry.key}: $error');
       }
     }
     return sources;
@@ -798,6 +805,7 @@ window.resetNavigationCamera = resetCamera;
     if (preferredLabel != null) {
       TFLiteDetectionResult? preferred;
       for (final detection in detections) {
+        if (!_shouldUseDetectionForNavigation(detection)) continue;
         if (detection.label != preferredLabel) continue;
         if (detection.confidence < _layoutReferenceThreshold) continue;
         if (_findLayoutObject(detection.label) == null) continue;
@@ -811,7 +819,7 @@ window.resetNavigationCamera = resetCamera;
             ObjectMappingService.getVietnameseName(preferred.label);
         final percent = (preferred.confidence * 100).toStringAsFixed(0);
         print(
-          '🗺️ Layout map: ưu tiên vật đích $objectName $percent% để định vị',
+          ' Layout map: ưu tiên vật đích $objectName $percent% để định vị',
         );
         _addActivityLog(
           'Layout',
@@ -823,6 +831,7 @@ window.resetNavigationCamera = resetCamera;
 
     TFLiteDetectionResult? best;
     for (final detection in detections) {
+      if (!_shouldUseDetectionForNavigation(detection)) continue;
       if (detection.confidence < _layoutReferenceThreshold) continue;
       if (_findLayoutObject(detection.label) == null) continue;
       if (best == null || detection.confidence > best.confidence) {
@@ -833,7 +842,7 @@ window.resetNavigationCamera = resetCamera;
       final objectName = ObjectMappingService.getVietnameseName(best.label);
       final percent = (best.confidence * 100).toStringAsFixed(0);
       print(
-        '🗺️ Layout map: $objectName chỉ $percent% nhưng có trong layout, dùng làm mốc định vị',
+        ' Layout map: $objectName chỉ $percent% nhưng có trong layout, dùng làm mốc định vị',
       );
       _addActivityLog(
         'Layout',
@@ -906,7 +915,7 @@ window.resetNavigationCamera = resetCamera;
     final percent = (detection.confidence * 100).toStringAsFixed(0);
 
     print(
-      '🗺️ Layout map: ước lượng vị trí người dùng từ $objectName ($percent%) '
+      ' Layout map: ước lượng vị trí người dùng từ $objectName ($percent%) '
       '=> x=${userPosition.dx.toStringAsFixed(2)}, z=${userPosition.dy.toStringAsFixed(2)}',
     );
 
@@ -1051,7 +1060,7 @@ window.resetNavigationCamera = resetCamera;
     if (isNearByEdge) {
       final objectName = ObjectMappingService.getVietnameseName(detection.label);
       print(
-        '✅ Điều hướng: $objectName sát mép ảnh và thật sự đủ lớn, coi là đã rất gần area=${areaRatio.toStringAsFixed(3)}, width=${widthRatio.toStringAsFixed(2)}, height=${heightRatio.toStringAsFixed(2)}',
+        ' Điều hướng: $objectName sát mép ảnh và thật sự đủ lớn, coi là đã rất gần area=${areaRatio.toStringAsFixed(3)}, width=${widthRatio.toStringAsFixed(2)}, height=${heightRatio.toStringAsFixed(2)}',
       );
       return true;
     }
@@ -1059,7 +1068,7 @@ window.resetNavigationCamera = resetCamera;
     if (areaRatio >= 0.34 || (widthRatio >= 0.70 && heightRatio >= 0.55)) {
       final objectName = ObjectMappingService.getVietnameseName(detection.label);
       print(
-        '✅ Điều hướng: $objectName chiếm nhiều khung hình, coi là rất gần area=${areaRatio.toStringAsFixed(3)}, width=${widthRatio.toStringAsFixed(2)}, height=${heightRatio.toStringAsFixed(2)}',
+        ' Điều hướng: $objectName chiếm nhiều khung hình, coi là rất gần area=${areaRatio.toStringAsFixed(3)}, width=${widthRatio.toStringAsFixed(2)}, height=${heightRatio.toStringAsFixed(2)}',
       );
       return true;
     }
@@ -1090,7 +1099,7 @@ window.resetNavigationCamera = resetCamera;
         isCloseByArea || isCloseByPartialView || isCloseOnTableLevel;
     if (isClose) {
       print(
-        '✅ Điều hướng laptop: dùng ngưỡng riêng cho vật nhỏ, coi là gần area=${areaRatio.toStringAsFixed(3)}, width=${widthRatio.toStringAsFixed(2)}, height=${heightRatio.toStringAsFixed(2)}, centerY=${centerYRatio.toStringAsFixed(2)}',
+        ' Điều hướng laptop: dùng ngưỡng riêng cho vật nhỏ, coi là gần area=${areaRatio.toStringAsFixed(3)}, width=${widthRatio.toStringAsFixed(2)}, height=${heightRatio.toStringAsFixed(2)}, centerY=${centerYRatio.toStringAsFixed(2)}',
       );
     }
     return isClose;
@@ -1190,7 +1199,7 @@ window.resetNavigationCamera = resetCamera;
 
     if (rawStepCount > cappedStepCount) {
       print(
-        '🧭 Điều hướng: giới hạn chặng từ $rawStepCount bước xuống $cappedStepCount bước để chặng sau không lớn hơn chặng trước',
+        ' Điều hướng: giới hạn chặng từ $rawStepCount bước xuống $cappedStepCount bước để chặng sau không lớn hơn chặng trước',
       );
     }
 
@@ -1362,6 +1371,7 @@ window.resetNavigationCamera = resetCamera;
     TFLiteDetectionResult? best;
 
     for (final detection in _lastDetections) {
+      if (!_shouldUseDetectionForNavigation(detection)) continue;
       if (detection.confidence < minConfidence) continue;
       if (maxConfidence != null && detection.confidence >= maxConfidence) {
         continue;
@@ -1386,6 +1396,7 @@ window.resetNavigationCamera = resetCamera;
 
     TFLiteDetectionResult? best;
     for (final detection in detections) {
+      if (!_shouldUseDetectionForNavigation(detection)) continue;
       if (detection.label != _targetObject) continue;
       if (detection.confidence < minConfidence) continue;
       if (maxConfidence != null && detection.confidence >= maxConfidence) {
@@ -1424,7 +1435,7 @@ window.resetNavigationCamera = resetCamera;
 
     if (isConfirmed) {
       print(
-        '✅ OpenRouter Vision: xác nhận $objectName từ box TFLite thấp $candidatePercent%',
+        ' OpenRouter Vision: xác nhận $objectName từ box TFLite thấp $candidatePercent%',
       );
       _handleObjectFound(lowDetection);
       return lowDetection;
@@ -1445,7 +1456,7 @@ window.resetNavigationCamera = resetCamera;
   }) async {
     if (!_canVerifyLabelWithGemini(expectedLabel)) {
       print(
-        '⚠️ OpenRouter: bỏ qua crop-box $logName vì label không có trong layout',
+        ' OpenRouter: bỏ qua crop-box $logName vì label không có trong layout',
       );
       _addActivityLog(
         'OpenRouter',
@@ -1522,7 +1533,7 @@ window.resetNavigationCamera = resetCamera;
 
       if (_targetObject == 'laptop') {
         final guidance =
-            '$objectName đã ở rất gần, nhưng mô hình local không vẽ đúng box vì camera đang quá sát hoặc vật bị cắt khung hình. '
+            '$objectName đã ở rất gần '
             'Hãy dừng lại, đưa tay thật chậm lên mặt bàn hoặc mặt kệ phía trước để dò laptop. '
             'Tôi sẽ thoát trạng thái tìm vật.';
         _isNavigationActive = false;
@@ -1557,7 +1568,7 @@ window.resetNavigationCamera = resetCamera;
 
       final guidance =
           'Tôi vẫn xác nhận thấy $objectName, nhưng mô hình chưa vẽ được box rõ. '
-          'Hãy giữ hướng hiện tại, tiến một bước nhỏ thật chậm và đưa camera nhẹ lên xuống để lấy rõ vật. '
+          'Hãy giữ hướng hiện tại, tiến một bước nhỏ thật chậm và đưa tay ra phía trước để dò vật. '
           'Sau khi làm xong, hãy nói: đã xong.';
       if (mounted) {
         setState(() => _lastGuidance = guidance);
@@ -1687,11 +1698,11 @@ window.resetNavigationCamera = resetCamera;
     final seenName = ObjectMappingService.getVietnameseName(reference.label);
     final seenPercent = (reference.confidence * 100).toStringAsFixed(0);
     print(
-      '🧭 Layout: detect thấy $seenName ($seenPercent%), dùng làm mốc để tìm $targetName',
+      ' Layout: detect thấy $seenName ($seenPercent%), dùng làm mốc để tìm $targetName',
     );
 
     if (target == null || seenObject == null) {
-      print('⚠️ Layout: thiếu tọa độ $seenName hoặc $targetName trong phòng');
+      print('Layout: thiếu tọa độ $seenName hoặc $targetName trong phòng');
       _lastScanRotationDegrees = 45;
       return 'Tôi thấy $seenName. Hãy xoay nhẹ sang phải khoảng 45 độ, không cần thật chính xác, rồi đứng yên 3 giây để tôi chụp lại.';
     }
@@ -1707,12 +1718,12 @@ window.resetNavigationCamera = resetCamera;
         _normalizeAngle((targetAngle - seenAngle) * 180 / math.pi);
     final roundedAngle = _roundToStepAngle(deltaDegrees);
     print(
-      '🧭 Layout: góc lệch từ $seenName tới $targetName = ${deltaDegrees.toStringAsFixed(1)} độ',
+      ' Layout: góc lệch từ $seenName tới $targetName = ${deltaDegrees.toStringAsFixed(1)} độ',
     );
 
     if (deltaDegrees.abs() < 20) {
       _lastScanRotationDegrees = 0;
-      return 'Tôi thấy $seenName. Dựa vào layout, hãy giữ hướng hiện tại, nghiêng điện thoại nhẹ sang trái rồi sang phải, sau đó đứng yên 3 giây để tôi chụp lại.';
+      return 'Tôi thấy $seenName. Dựa vào layout, hãy giữ hướng hiện tại, sau đó đứng yên 3 giây để tôi chụp lại.';
     }
 
     if (deltaDegrees.abs() >= 150) {
@@ -1723,20 +1734,20 @@ window.resetNavigationCamera = resetCamera;
     final direction = deltaDegrees < 0 ? 'phải' : 'trái';
     _lastScanRotationDegrees = roundedAngle;
     print(
-      '🧭 Layout: hướng xoay đề xuất = $direction $roundedAngle độ',
+      ' Layout: hướng xoay đề xuất = $direction $roundedAngle độ',
     );
     return 'Tôi thấy $seenName. Dựa vào layout, hãy xoay người và điện thoại sang $direction khoảng $roundedAngle độ thật chậm, rồi đứng yên 3 giây để tôi chụp lại.';
   }
 
   Future<TFLiteDetectionResult?> _captureAndAnalyzeImage() async {
     if (!_isCameraInitialized) {
-      print('⚠️ Camera: chưa sẵn sàng để chụp ảnh');
+      print('Camera: chưa sẵn sàng để chụp ảnh');
       return null;
     }
 
     if (!_isDetectionInitialized) {
       const message = 'TFLite chưa sẵn sàng, hãy thêm assets/models/best.tflite';
-      print('⚠️ Detect local: $message');
+      print('Detect local: $message');
       if (mounted) {
         setState(() => _apiStatus = message);
       }
@@ -1745,7 +1756,7 @@ window.resetNavigationCamera = resetCamera;
 
     if (_activeTask != _CameraTask.idle) {
       final message = 'Đang bận tác vụ khác, vui lòng chờ xong rồi chụp lại';
-      print('⚠️ Detect local: $message');
+      print('Detect local: $message');
       if (mounted) {
         setState(() => _apiStatus = message);
       }
@@ -1765,10 +1776,10 @@ window.resetNavigationCamera = resetCamera;
     }
 
     try {
-      print('📷 Camera: bắt đầu chụp ảnh');
+      print('Camera: bắt đầu chụp ảnh');
       _addActivityLog('Camera', 'Bắt đầu chụp ảnh.');
       final image = await _cameraController.takePicture();
-      print('✅ Camera: đã chụp ảnh tại ${image.path}');
+      print('Camera: đã chụp ảnh tại ${image.path}');
       _addActivityLog('Camera', 'Đã chụp ảnh, đang phân tích vật thể.');
 
       if (mounted) {
@@ -1785,33 +1796,36 @@ window.resetNavigationCamera = resetCamera;
 
       if (!mounted) return null;
 
+      final usableDetections =
+          result.detections.where(_shouldUseDetectionForNavigation).toList();
+
       setState(() {
         _lastAnalyzedImagePath = result.annotatedImagePath;
         _lastImageSize = Size(
           result.imageWidth.toDouble(),
           result.imageHeight.toDouble(),
         );
-        _lastDetections = result.detections;
-        _apiStatus = 'Detect local xong: ${result.count} vật thể';
+        _lastDetections = usableDetections;
+        _apiStatus = 'Detect local xong: ${usableDetections.length} vật thể';
       });
-      _addActivityLog('Detect', _createDetectionLog(result.detections));
+      _addActivityLog('Detect', _createDetectionLog(usableDetections));
 
-      if (_targetObject != null && result.detections.isNotEmpty) {
+      if (_targetObject != null && usableDetections.isNotEmpty) {
         final found = _bestTargetDetectionInRange(
-          result.detections,
+          usableDetections,
           minConfidence: _visualConfirmThreshold,
         );
 
         if (found != null) {
           print(
-            '✅ Detect local: đã xác nhận vật mục tiêu >= ${(_visualConfirmThreshold * 100).toStringAsFixed(0)}%',
+            ' Detect local: đã xác nhận vật mục tiêu >= ${(_visualConfirmThreshold * 100).toStringAsFixed(0)}%',
           );
           _handleObjectFound(found);
           return found;
         }
 
         final lowConfidenceTarget = _bestTargetDetectionInRange(
-          result.detections,
+          usableDetections,
           minConfidence: _lowConfidenceTargetThreshold,
           maxConfidence: _visualConfirmThreshold,
         );
@@ -1824,7 +1838,7 @@ window.resetNavigationCamera = resetCamera;
             _lastLowConfidenceTargetDetection = lowConfidenceTarget;
             _lastLowConfidenceImagePath = image.path;
             print(
-              '⚠️ Detect local: nghi ngờ $objectName $percent%, có trong layout nên cần OpenRouter xác minh crop-box',
+              ' Detect local: nghi ngờ $objectName $percent%, có trong layout nên cần OpenRouter xác minh crop-box',
             );
             _addActivityLog(
               'Detect',
@@ -1835,7 +1849,7 @@ window.resetNavigationCamera = resetCamera;
                   'Có thể đã thấy $objectName nhưng độ tin cậy còn thấp.';
             });
             final mapReference = _bestLayoutDetection(
-              result.detections,
+              usableDetections,
               preferredLabel: lowConfidenceTarget.label,
             );
             if (mapReference != null) {
@@ -1844,7 +1858,7 @@ window.resetNavigationCamera = resetCamera;
             return null;
           } else {
             print(
-              '⚠️ Detect local: bỏ qua $objectName $percent% vì không có trong layout',
+              ' Detect local: bỏ qua $objectName $percent% vì không có trong layout',
             );
             _addActivityLog(
               'Detect',
@@ -1859,15 +1873,15 @@ window.resetNavigationCamera = resetCamera;
         }
       }
 
-      final mapReference = _bestLayoutDetection(result.detections);
+      final mapReference = _bestLayoutDetection(usableDetections);
       if (mapReference != null) {
         _updateEstimatedUserPosition(mapReference);
       } else {
-        print('🗺️ Layout map: chưa có vật detect đủ tin cậy để định vị');
+        print('Layout map: chưa có vật detect đủ tin cậy để định vị');
       }
       return null;
     } catch (e) {
-      print('❌ Detect local: lỗi khi chụp hoặc phân tích ảnh: $e');
+      print('Detect local: lỗi khi chụp hoặc phân tích ảnh: $e');
       _addActivityLog('Detect', 'Lỗi khi chụp hoặc phân tích ảnh: $e');
       if (mounted) {
         setState(() => _apiStatus = 'Lỗi khi phân tích ảnh: $e');
@@ -1913,7 +1927,7 @@ window.resetNavigationCamera = resetCamera;
 
     if (_activeRoomLayout != null && _findLayoutObject(_targetObject!) == null) {
       print(
-        '⚠️ Layout: $objectName chưa có trong layout, vẫn ưu tiên camera detect và dùng quét 45 độ',
+        ' Layout: $objectName chưa có trong layout, vẫn ưu tiên camera detect và dùng quét 45 độ',
       );
       _addActivityLog(
         'Layout',
@@ -1978,7 +1992,7 @@ window.resetNavigationCamera = resetCamera;
         final percent =
             (lowConfidenceTarget.confidence * 100).toStringAsFixed(0);
         print(
-          '✅ Điều hướng: đang đi từng chặng, vẫn bám theo $detectedName dù confidence $percent%',
+          ' Điều hướng: đang đi từng chặng, vẫn bám theo $detectedName dù confidence $percent%',
         );
         _addActivityLog(
           'Detect',
@@ -2015,7 +2029,7 @@ window.resetNavigationCamera = resetCamera;
           final refName =
               ObjectMappingService.getVietnameseName(betterReference.label);
           print(
-            '🧭 Detect: chưa có box $targetName đủ ngưỡng thấp, dùng $refName làm mốc layout',
+            ' Detect: chưa có box $targetName đủ ngưỡng thấp, dùng $refName làm mốc layout',
           );
         }
       }
@@ -2055,7 +2069,7 @@ window.resetNavigationCamera = resetCamera;
             reliableReference = lowReference;
           } else {
             print(
-              '⚠️ Layout: bỏ qua vật mốc ${lowReference.label} vì OpenRouter không xác nhận',
+              ' Layout: bỏ qua vật mốc ${lowReference.label} vì OpenRouter không xác nhận',
             );
           }
         }
@@ -2069,7 +2083,7 @@ window.resetNavigationCamera = resetCamera;
         final seenPercent =
             (reliableReference.confidence * 100).toStringAsFixed(0);
         print(
-          '🧭 Layout: dùng $seenName ($seenPercent%) làm vật mốc để tìm $objectName',
+          ' Layout: dùng $seenName ($seenPercent%) làm vật mốc để tìm $objectName',
         );
       }
       _navigationStepCount++;
@@ -2079,7 +2093,7 @@ window.resetNavigationCamera = resetCamera;
       await _speak(scanGuidance, restartListening: false);
       _scanRotationDegrees += _lastScanRotationDegrees;
       print(
-        '🧭 Quét ảnh: đã yêu cầu xoay tổng cộng $_scanRotationDegrees độ',
+        ' Quét ảnh: đã yêu cầu xoay tổng cộng $_scanRotationDegrees độ',
       );
       await Future.delayed(const Duration(seconds: 3));
       await _captureAndContinueNavigation();
@@ -2124,7 +2138,7 @@ window.resetNavigationCamera = resetCamera;
       if (_targetObject == 'table' && !_hasAddedFinalTableApproachStep) {
         _hasAddedFinalTableApproachStep = true;
         final tableGuidance =
-            '$objectName đã nằm rất rõ trong khung hình, nhưng thực tế có thể vẫn còn cách khoảng hai bước nhỏ. '
+            '$objectName đã nằm rất rõ trong khung hình. '
             'Chặng cuối này hãy tiến nhẹ hai bước thật chậm, giữ tay phía trước để dò cạnh bàn. '
             'Sau hai bước thì dừng lại và đưa tay dò cạnh bàn thật chậm. Tôi sẽ thoát trạng thái tìm vật.';
         _isNavigationActive = false;
@@ -2236,14 +2250,26 @@ window.resetNavigationCamera = resetCamera;
     final normalized = command.toLowerCase().trim();
     return normalized.contains('thấy vật') ||
         normalized.contains('thay vat') ||
+        normalized.contains('đã thấy') ||
+        normalized.contains('da thay') ||
         normalized.contains('tìm thấy') ||
         normalized.contains('tim thay') ||
+        normalized.contains('đã tìm thấy') ||
+        normalized.contains('da tim thay') ||
+        normalized.contains('tìm được') ||
+        normalized.contains('tim duoc') ||
+        normalized.contains('đã tìm được') ||
+        normalized.contains('da tim duoc') ||
         normalized.contains('thấy rồi') ||
         normalized.contains('thay roi') ||
         normalized.contains('chạm được') ||
         normalized.contains('cham duoc') ||
+        normalized.contains('đã chạm') ||
+        normalized.contains('da cham') ||
         normalized.contains('sờ thấy') ||
         normalized.contains('so thay') ||
+        normalized.contains('đã sờ') ||
+        normalized.contains('da so') ||
         normalized.contains('đụng được') ||
         normalized.contains('dung duoc') ||
         normalized.contains('cầm được') ||
@@ -2335,13 +2361,13 @@ window.resetNavigationCamera = resetCamera;
     if (!_awaitingMovementConfirmation) return;
 
     if (_isUserFoundObjectCommand(command)) {
-      print('✅ Người dùng báo đã thấy/chạm được vật: "$command"');
+      print('Người dùng báo đã thấy/chạm được vật: "$command"');
       await _finishNavigationByUserFoundObject();
       return;
     }
 
     final isConfirmed = await _isMovementConfirmation(command);
-    print('🤖 Xác nhận hoàn thành chặng: "$command" => $isConfirmed');
+    print('Xác nhận hoàn thành chặng: "$command" => $isConfirmed');
     if (!isConfirmed) {
       await _speak(
         'Tôi chưa nghe rõ xác nhận. Nếu bạn đã làm xong chặng vừa rồi, hãy tự bấm mic và nói: đã xong.',
@@ -2371,13 +2397,13 @@ window.resetNavigationCamera = resetCamera;
 
     _activeTask = _CameraTask.speaking;
     _lastSpeechTime = DateTime.now();
-    print('🔊 TTS: bắt đầu đọc "$text"');
+    print('TTS: bắt đầu đọc "$text"');
     _addActivityLog('Hệ thống', text);
     try {
       await _ttsApi.speak(text, lang: 'vi');
-      print('✅ TTS: đã gửi yêu cầu đọc thành công');
+      print('TTS: đã gửi yêu cầu đọc thành công');
     } catch (e) {
-      print('❌ TTS: lỗi khi đọc: $e');
+      print('TTS: lỗi khi đọc: $e');
     } finally {
       if (_activeTask == _CameraTask.speaking) {
         _activeTask = _CameraTask.idle;
@@ -2391,23 +2417,23 @@ window.resetNavigationCamera = resetCamera;
   Future<void> _startContinuousListening() async {
     if (_isListening || _isProcessingSpeechCommand || _activeTask != _CameraTask.idle) {
       if (_isProcessingSpeechCommand) {
-        print('⚠️ STT: đang xử lý câu nói trước, chưa mở mic mới');
+        print('STT: đang xử lý câu nói trước, chưa mở mic mới');
       }
       return;
     }
 
     if (!_isSpeechInitialized) {
-      print('🔄 STT: chưa có phiên mic, khởi tạo mới như lúc mở app');
+      print('STT: chưa có phiên mic, khởi tạo mới như lúc mở app');
       await _initializeSpeechRecognizer();
     }
 
-    print('🎤 STT: bắt đầu thu âm, hãy nói vào micro');
+    print('STT: bắt đầu thu âm, hãy nói vào micro');
 
     final now = DateTime.now();
     if (_speechBlockedUntil != null && now.isBefore(_speechBlockedUntil!)) {
       final seconds = _speechBlockedUntil!.difference(now).inSeconds + 1;
       final message = 'STT đang bị Google giới hạn, vui lòng chờ $seconds giây rồi thử lại';
-      print('⚠️ STT: $message');
+      print('STT: $message');
       if (mounted) {
         setState(() => _recognizedText = message);
       }
@@ -2417,7 +2443,7 @@ window.resetNavigationCamera = resetCamera;
     if (_lastListenStartTime != null &&
         now.difference(_lastListenStartTime!).inMilliseconds < 2500) {
       const message = 'Bấm mic hơi nhanh, vui lòng chờ 2 giây rồi thử lại';
-      print('⚠️ STT: $message');
+      print('STT: $message');
       if (mounted) {
         setState(() => _recognizedText = message);
       }
@@ -2427,7 +2453,7 @@ window.resetNavigationCamera = resetCamera;
     if (!_isSpeechAvailable || !_speechToText.isAvailable) {
       const message =
           'STT chưa khả dụng: hãy bật/cài Google Speech Recognition trên thiết bị';
-      print('❌ STT: $message');
+      print('STT: $message');
       if (mounted) {
         setState(() => _recognizedText = message);
       }
@@ -2444,10 +2470,10 @@ window.resetNavigationCamera = resetCamera;
       setState(() {});
     }
 
-    print('🔴 STT: đang thu âm');
+    print('STT: đang thu âm');
     try {
       if (!_isSpeechAvailable || !_speechToText.isAvailable) {
-        print('❌ STT: phiên SpeechRecognizer mới không khả dụng');
+        print('STT: phiên SpeechRecognizer mới không khả dụng');
         _isListening = false;
         _activeTask = _CameraTask.idle;
         if (mounted) setState(() {});
@@ -2458,7 +2484,7 @@ window.resetNavigationCamera = resetCamera;
           if (!_isListening) {
             final lateCommand = result.recognizedWords.trim();
             if (lateCommand.isNotEmpty) {
-              print('⚠️ STT: bỏ qua kết quả đến muộn sau khi đã dừng mic = "$lateCommand"');
+              print('STT: bỏ qua kết quả đến muộn sau khi đã dừng mic = "$lateCommand"');
             }
             return;
           }
@@ -2466,7 +2492,7 @@ window.resetNavigationCamera = resetCamera;
           final command = result.recognizedWords.trim();
           if (command.isEmpty) return;
 
-          print('📝 STT: nghe được "$command" (kết quả cuối: ${result.finalResult})');
+          print('STT: nghe được "$command" (kết quả cuối: ${result.finalResult})');
           _lastSpeechCandidate = command;
           if (mounted) {
             setState(() => _recognizedText = command);
@@ -2475,7 +2501,7 @@ window.resetNavigationCamera = resetCamera;
           if (result.finalResult && command.isNotEmpty && !_isHandlingSpeechResult) {
             _isHandlingSpeechResult = true;
             _isProcessingSpeechCommand = true;
-            print('✅ STT: kết quả cuối = $command');
+            print('STT: kết quả cuối = $command');
             try {
               await _stopListeningQuiet();
               await _handleRecognizedCommand(command);
@@ -2486,7 +2512,7 @@ window.resetNavigationCamera = resetCamera;
           }
         },
         onSoundLevelChange: (level) {
-          print('🎚️ STT: âm lượng mic = ${level.toStringAsFixed(2)}');
+          print('STT: âm lượng mic = ${level.toStringAsFixed(2)}');
         },
         listenFor: const Duration(seconds: 30),
         pauseFor: const Duration(seconds: 5),
@@ -2495,7 +2521,7 @@ window.resetNavigationCamera = resetCamera;
         listenMode: stt.ListenMode.confirmation,
       );
     } catch (e) {
-      print('❌ STT: lỗi khi thu âm: $e');
+      print('STT: lỗi khi thu âm: $e');
       _isListening = false;
       if (_activeTask == _CameraTask.listening) {
         _activeTask = _CameraTask.idle;
@@ -2505,7 +2531,7 @@ window.resetNavigationCamera = resetCamera;
   }
 
   void _handleSpeechStatus(String status) {
-    print('ℹ️ STT: trạng thái = $status');
+    print('STT: trạng thái = $status');
     if (status == 'done' || status == 'notListening' || status == 'doneNoResult') {
       _isListening = false;
       if (!_isProcessingSpeechCommand) {
@@ -2554,10 +2580,10 @@ window.resetNavigationCamera = resetCamera;
     }
 
     if (!isDuplicateError) {
-      print('❌ STT: $message');
+      print('STT: $message');
       if (!isNoMatch && !isServerDisconnected) {
         print(
-          '💡 STT: trên máy thật, hãy kiểm tra Google app/Speech Services và secure setting voice_recognition_service',
+          ' STT: trên máy thật, hãy kiểm tra Google app/Speech Services và secure setting voice_recognition_service',
         );
       }
     }
@@ -2589,7 +2615,7 @@ window.resetNavigationCamera = resetCamera;
   Future<void> _handleRecognizedCommand(String command) async {
     final normalizedCommand = command.trim();
     if (_isSystemRecognizedText(normalizedCommand) || _hasHandledCurrentSpeech) {
-      print('⚠️ STT: bỏ qua command không hợp lệ: "$normalizedCommand"');
+      print('STT: bỏ qua command không hợp lệ: "$normalizedCommand"');
       return;
     }
 
@@ -2597,7 +2623,7 @@ window.resetNavigationCamera = resetCamera;
     _addActivityLog('Người', normalizedCommand);
 
     if (_isEmergencyStopCommand(normalizedCommand)) {
-      print('📍 STT: lệnh dừng khẩn cấp');
+      print('STT: lệnh dừng khẩn cấp');
       _stop();
       return;
     }
@@ -2605,8 +2631,17 @@ window.resetNavigationCamera = resetCamera;
     if ((_isNavigationActive ||
             _awaitingReadyForMovement ||
             _awaitingMovementConfirmation) &&
+        _isUserFoundObjectCommand(normalizedCommand)) {
+      print('STT: người dùng báo đã tìm thấy/chạm được vật');
+      await _finishNavigationByUserFoundObject();
+      return;
+    }
+
+    if ((_isNavigationActive ||
+            _awaitingReadyForMovement ||
+            _awaitingMovementConfirmation) &&
         _looksLikeNewSearchCommand(normalizedCommand)) {
-      print('🔄 STT: phát hiện người dùng đổi vật cần tìm');
+      print('STT: phát hiện người dùng đổi vật cần tìm');
       _resetNavigationStateForNewSearch();
       final canSearch = await _processVoiceCommand(normalizedCommand);
       if (canSearch) {
@@ -2684,9 +2719,9 @@ window.resetNavigationCamera = resetCamera;
     });
   }
   void _startListening() {
-    print('🎤 STT: bấm nút mic');
+    print('STT: bấm nút mic');
     if (_isProcessingSpeechCommand) {
-      print('⚠️ STT: câu nói trước đang được xử lý, vui lòng chờ app phản hồi xong');
+      print('STT: câu nói trước đang được xử lý, vui lòng chờ app phản hồi xong');
       return;
     }
 
@@ -2724,7 +2759,7 @@ window.resetNavigationCamera = resetCamera;
   }
 
   Future<void> _stopListening() async {
-    print('⏹️ STT: dừng thu âm');
+    print('STT: dừng thu âm');
     if (_lastSpeechCandidate.trim().isEmpty) {
       await Future.delayed(const Duration(milliseconds: 800));
     }
@@ -2743,7 +2778,7 @@ window.resetNavigationCamera = resetCamera;
     }
 
     if (candidate.isNotEmpty && !_hasHandledCurrentSpeech) {
-      print('✅ STT: xử lý text khi người dùng tắt mic = "$candidate"');
+      print('STT: xử lý text khi người dùng tắt mic = "$candidate"');
       _isProcessingSpeechCommand = true;
       try {
         await _handleRecognizedCommand(candidate);
@@ -2754,7 +2789,7 @@ window.resetNavigationCamera = resetCamera;
   }
 
   Future<void> _stopListeningQuiet() async {
-    print('⏹️ STT: dừng thu âm nội bộ');
+    print('STT: dừng thu âm nội bộ');
     if (_isSpeechInitialized) {
       await _speechToText.stop();
     }
@@ -2765,10 +2800,10 @@ window.resetNavigationCamera = resetCamera;
     }
   }
   Future<bool> _processVoiceCommand(String command) async {
-    print('📨 STT: xử lý text được gửi: "$command"');
+    print('STT: xử lý text được gửi: "$command"');
 
     if (_isEmergencyStopCommand(command)) {
-      print('📍 STT: phát hiện lệnh dừng/thoát');
+      print('STT: phát hiện lệnh dừng/thoát');
       _isNavigationActive = false;
       _awaitingMovementConfirmation = false;
       _awaitingReadyForMovement = false;
@@ -2783,11 +2818,11 @@ window.resetNavigationCamera = resetCamera;
     }
 
     final label = await _parseTargetObject(command);
-    print('🎯 STT: label sau khi parse = $label');
+    print('STT: label sau khi parse = $label');
 
     if (label != null) {
       final name = ObjectMappingService.getVietnameseName(label);
-      print('✅ STT: đã chọn mục tiêu cần tìm = $name');
+      print('STT: đã chọn mục tiêu cần tìm = $name');
       setState(() => _targetObject = label);
       _syncTargetMarkerToScene();
       await _speak(
@@ -2797,7 +2832,7 @@ window.resetNavigationCamera = resetCamera;
       return true;
     }
 
-    print('❌ STT: không hiểu nội dung text');
+    print('STT: không hiểu nội dung text');
     await _speak(
       'Tôi chưa hiểu bạn muốn tìm vật gì. Vui lòng bấm mic và nói lại, ví dụ: tìm cái ghế, tìm cái bàn, hoặc tìm tủ lạnh.',
       restartListening: false,
@@ -2810,7 +2845,7 @@ window.resetNavigationCamera = resetCamera;
       return aiLabel;
     }
 
-    print('⚠️ OpenRouter: fallback sang mapping từ khóa local');
+    print('OpenRouter: fallback sang mapping từ khóa local');
     return ObjectMappingService.parseVoiceCommand(command);
   }
   bool _isSystemRecognizedText(String text) {
@@ -2851,7 +2886,7 @@ window.resetNavigationCamera = resetCamera;
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (!_isCameraInitialized) return;
     if (state == AppLifecycleState.paused) {
-      print('ℹ️ App: tạm rời màn hình, giữ trạng thái camera/TTS');
+      print('App: tạm rời màn hình, giữ trạng thái camera/TTS');
       if (_isTtsInitialized) {
         _ttsApi.stop();
       }
@@ -2859,7 +2894,7 @@ window.resetNavigationCamera = resetCamera;
         _activeTask = _CameraTask.idle;
       }
     } else if (state == AppLifecycleState.resumed) {
-      print('ℹ️ App: quay lại màn hình, kiểm tra lại TTS');
+      print('App: quay lại màn hình, kiểm tra lại TTS');
       if (_isTtsInitialized) {
         _ttsApi = TTSApiService();
       }
@@ -3749,3 +3784,5 @@ class RoomNavigationMapPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant RoomNavigationMapPainter oldDelegate) => true;
 }
+
+

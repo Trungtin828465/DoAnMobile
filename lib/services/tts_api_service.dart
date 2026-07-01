@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
@@ -25,7 +25,7 @@ class TTSApiService {
     if (!_isPlayerDisposed) return;
     _audioPlayer = AudioPlayer();
     _isPlayerDisposed = false;
-    print('🔄 TTS API: Tạo lại AudioPlayer sau khi quay lại màn hình');
+    print('TTS API: Tạo lại AudioPlayer sau khi quay lại màn hình');
   }
 
   Future<void> speak(String text, {String lang = 'vi'}) async {
@@ -33,11 +33,11 @@ class TTSApiService {
 
     try {
       if (text.trim().isEmpty) {
-        print('❌ TTS API: Text trống');
+        print('TTS API: Text trống');
         return;
       }
 
-      print('🔊 TTS API: Đang gọi API với text: "$text" (lang: $lang)');
+      print('TTS API: Đang gọi API với text: "$text" (lang: $lang)');
 
       final url = Uri.parse(
         '$_ttsUrl?text=${Uri.encodeComponent(text)}&lang=$lang',
@@ -51,18 +51,18 @@ class TTSApiService {
       );
 
       if (response.statusCode != 200) {
-        print('❌ TTS API Error: Status ${response.statusCode}');
+        print('TTS API Error: Status ${response.statusCode}');
         print('Response: ${response.body}');
         return;
       }
 
       final contentType = response.headers['content-type'] ?? '';
       if (!contentType.contains('audio')) {
-        print('⚠️ TTS API: Nhận response không phải audio: $contentType');
+        print('TTS API: Nhận response không phải audio: $contentType');
         return;
       }
 
-      print('✅ TTS API: Nhận audio stream (${response.bodyBytes.length} bytes)');
+      print('TTS API: Nhận audio stream (${response.bodyBytes.length} bytes)');
 
       final completer = Completer<void>();
       late StreamSubscription<void> subscription;
@@ -75,7 +75,7 @@ class TTSApiService {
 
       await _audioPlayer.stop();
       await _audioPlayer.play(BytesSource(response.bodyBytes), volume: 1.0);
-      print('✅ TTS API: Đang phát âm thanh');
+      print('TTS API: Đang phát âm thanh');
 
       await completer.future.timeout(
         const Duration(seconds: 45),
@@ -85,9 +85,9 @@ class TTSApiService {
       );
 
       await _audioPlayer.stop();
-      print('✅ TTS API: Đã phát xong âm thanh');
+      print('TTS API: Đã phát xong âm thanh');
     } catch (error) {
-      print('❌ TTS API Exception: $error');
+      print('TTS API Exception: $error');
       rethrow;
     }
   }
@@ -97,9 +97,9 @@ class TTSApiService {
 
     try {
       await _audioPlayer.stop();
-      print('⏹️ TTS API: Dừng phát âm thanh');
+      print('TTS API: Dừng phát âm thanh');
     } catch (error) {
-      print('❌ TTS API Stop Error: $error');
+      print('TTS API Stop Error: $error');
     }
   }
 
@@ -110,14 +110,14 @@ class TTSApiService {
           .timeout(const Duration(seconds: 5));
 
       if (response.statusCode == 200) {
-        print('✅ TTS API: Health check thành công');
+        print('TTS API: Health check thành công');
         return true;
       }
 
-      print('⚠️ TTS API: Health check status ${response.statusCode}');
+      print('TTS API: Health check status ${response.statusCode}');
       return false;
     } catch (error) {
-      print('❌ TTS API: Health check thất bại - $error');
+      print('TTS API: Health check thất bại - $error');
       return false;
     }
   }
@@ -129,6 +129,8 @@ class TTSApiService {
     _audioPlayer.stop();
     _audioPlayer.dispose();
     _isPlayerDisposed = true;
-    print('🧹 TTS API: Đã giải phóng AudioPlayer');
+    print('TTS API: Đã giải phóng AudioPlayer');
   }
 }
+
+

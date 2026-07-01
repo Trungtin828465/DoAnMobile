@@ -1,4 +1,4 @@
-import 'dart:io';
+﻿import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
@@ -118,7 +118,7 @@ class TFLiteDetectionService {
     if (_isInitialized) return;
 
     try {
-      print('🤖 TFLite: đang load model $modelAssetPath');
+      print('TFLite: đang load model $modelAssetPath');
       _interpreter = await Interpreter.fromAsset(modelAssetPath);
 
       final inputTensor = _interpreter!.getInputTensor(0);
@@ -131,16 +131,16 @@ class TFLiteDetectionService {
       }
 
       _isInitialized = true;
-      print('✅ TFLite: load model thành công');
-      print('ℹ️ TFLite: input shape=$inputShape, type=$_inputTypeName');
-      print('ℹ️ TFLite: output shape=${_interpreter!.getOutputTensor(0).shape}');
+      print('TFLite: load model thành công');
+      print('TFLite: input shape=$inputShape, type=$_inputTypeName');
+      print('TFLite: output shape=${_interpreter!.getOutputTensor(0).shape}');
     } catch (e) {
       _interpreter?.close();
       _interpreter = null;
       _isInitialized = false;
-      print('❌ TFLite: không load được model best.tflite');
-      print('💡 TFLite: hãy đặt file tại assets/models/best.tflite');
-      print('❌ TFLite: lỗi chi tiết: $e');
+      print('TFLite: không load được model best.tflite');
+      print('TFLite: hãy đặt file tại assets/models/best.tflite');
+      print('TFLite: lỗi chi tiết: $e');
       rethrow;
     }
   }
@@ -171,7 +171,7 @@ class TFLiteDetectionService {
     final outputShape = outputTensor.shape;
     final output = _createNestedList(outputShape);
 
-    print('🔎 TFLite: bắt đầu detect ảnh ${sourceImage.width}x${sourceImage.height}');
+    print('TFLite: bắt đầu detect ảnh ${sourceImage.width}x${sourceImage.height}');
     _interpreter!.run(input, output);
 
     final rawDetections = _parseOutput(
@@ -184,8 +184,8 @@ class TFLiteDetectionService {
     final annotatedPath = await _saveAnnotatedImage(sourceImage, detections);
 
     _lastDetections = detections;
-    print('✅ TFLite: detect xong, count=${detections.length}');
-    print('📁 TFLite: ảnh đã vẽ box: $annotatedPath');
+    print('TFLite: detect xong, count=${detections.length}');
+    print('TFLite: ảnh đã vẽ box: $annotatedPath');
 
     return TFLiteDetectionResponse(
       success: true,
@@ -241,7 +241,7 @@ class TFLiteDetectionService {
     _flattenOutput(output, flat);
 
     if (shape.length < 3 || flat.isEmpty) {
-      print('⚠️ TFLite: output shape chưa hỗ trợ: $shape');
+      print('TFLite: output shape chưa hỗ trợ: $shape');
       return [];
     }
 
@@ -282,7 +282,7 @@ class TFLiteDetectionService {
       );
     }
 
-    print('⚠️ TFLite: chưa nhận dạng được output shape $shape');
+    print('TFLite: chưa nhận dạng được output shape $shape');
     return [];
   }
 
@@ -576,7 +576,7 @@ class TFLiteDetectionService {
 
     if (!await detectionDirectory.exists()) {
       await detectionDirectory.create(recursive: true);
-      print('📁 TFLite: đã tạo thư mục ${detectionDirectory.path}');
+      print('TFLite: đã tạo thư mục ${detectionDirectory.path}');
     }
 
     return detectionDirectory;
@@ -612,3 +612,5 @@ class TFLiteDetectionService {
     _lastDetections = [];
   }
 }
+
+

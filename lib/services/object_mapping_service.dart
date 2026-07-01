@@ -1,4 +1,4 @@
-class ObjectMappingService {
+﻿class ObjectMappingService {
   static const Map<String, List<String>> vietnameseToYoloLabel = {
     'giường': ['bed'],
     'cái giường': ['bed'],
@@ -51,18 +51,18 @@ class ObjectMappingService {
   };
 
   static const Map<String, Map<String, dynamic>> yoloLabelInfo = {
-    'bed': {'name': 'Giường', 'icon': '🛏️', 'dangerLevel': 1},
-    'sofa': {'name': 'Sofa', 'icon': '🛋️', 'dangerLevel': 1},
-    'chair': {'name': 'Ghế', 'icon': '🪑', 'dangerLevel': 1},
-    'table': {'name': 'Bàn', 'icon': '📦', 'dangerLevel': 1},
-    'wardrobe': {'name': 'Tủ quần áo', 'icon': '🚪', 'dangerLevel': 1},
-    'refrigerator': {'name': 'Tủ lạnh', 'icon': '🧊', 'dangerLevel': 1},
-    'tv': {'name': 'Tivi', 'icon': '📺', 'dangerLevel': 1},
-    'door': {'name': 'Cửa', 'icon': '🚪', 'dangerLevel': 2},
-    'window': {'name': 'Cửa sổ', 'icon': '🪟', 'dangerLevel': 2},
-    'fan': {'name': 'Quạt', 'icon': '🌀', 'dangerLevel': 1},
-    'laptop': {'name': 'Laptop', 'icon': '💻', 'dangerLevel': 1},
-    'washing_machine': {'name': 'Máy giặt', 'icon': '🧺', 'dangerLevel': 1},
+    'bed': {'name': 'Giường', 'icon': '', 'dangerLevel': 1},
+    'sofa': {'name': 'Sofa', 'icon': '', 'dangerLevel': 1},
+    'chair': {'name': 'Ghế', 'icon': '', 'dangerLevel': 1},
+    'table': {'name': 'Bàn', 'icon': '', 'dangerLevel': 1},
+    'wardrobe': {'name': 'Tủ quần áo', 'icon': '', 'dangerLevel': 1},
+    'refrigerator': {'name': 'Tủ lạnh', 'icon': '', 'dangerLevel': 1},
+    'tv': {'name': 'Tivi', 'icon': '', 'dangerLevel': 1},
+    'door': {'name': 'Cửa', 'icon': '', 'dangerLevel': 2},
+    'window': {'name': 'Cửa sổ', 'icon': '', 'dangerLevel': 2},
+    'fan': {'name': 'Quạt', 'icon': '', 'dangerLevel': 1},
+    'laptop': {'name': 'Laptop', 'icon': '', 'dangerLevel': 1},
+    'washing_machine': {'name': 'Máy giặt', 'icon': '', 'dangerLevel': 1},
   };
 
   static String? parseVoiceCommand(String voiceText) {
@@ -88,7 +88,7 @@ class ObjectMappingService {
 
   static String getIcon(String yoloLabel) {
     final info = getObjectInfo(yoloLabel);
-    return info?['icon'] ?? '📦';
+    return info?['icon'] ?? '';
   }
 
   static int getDangerLevel(String yoloLabel) {
@@ -100,3 +100,5 @@ class ObjectMappingService {
     return getDangerLevel(yoloLabel) >= 2;
   }
 }
+
+

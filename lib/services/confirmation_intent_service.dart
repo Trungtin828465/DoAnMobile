@@ -1,4 +1,4 @@
-import 'dart:convert';
+﻿import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
@@ -29,7 +29,7 @@ class ConfirmationIntentService {
       }
     }
 
-    print('⚠️ OpenRouter: nhãn object không hợp lệ: $answer');
+    print('OpenRouter: nhãn object không hợp lệ: $answer');
     return null;
   }
 
@@ -57,7 +57,7 @@ class ConfirmationIntentService {
     }
 
     final fallbackResult = _localMovementConfirmationFallback(text);
-    print('⚠️ OpenRouter: câu trả lời xác nhận không rõ, fallback local = $fallbackResult');
+    print('OpenRouter: câu trả lời xác nhận không rõ, fallback local = $fallbackResult');
     return fallbackResult;
   }
 
@@ -94,12 +94,12 @@ class ConfirmationIntentService {
   }) async {
     final apiKey = EnvConfig.openrouterApiKey;
     if (apiKey.isEmpty) {
-      print('⚠️ OpenRouter: thiếu openrouterApiKey trong .env');
+      print('OpenRouter: thiếu openrouterApiKey trong .env');
       return null;
     }
 
     try {
-      print('🤖 OpenRouter: đang $purpose: "$userText"');
+      print('OpenRouter: đang $purpose: "$userText"');
       final response = await http
           .post(
             Uri.parse(EnvConfig.openrouterApiUrl),
@@ -126,15 +126,15 @@ class ConfirmationIntentService {
           .timeout(const Duration(seconds: 10));
 
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        print('❌ OpenRouter: lỗi status ${response.statusCode}');
-        print('❌ OpenRouter: body ${response.body}');
+        print('OpenRouter: lỗi status ${response.statusCode}');
+        print('OpenRouter: body ${response.body}');
         return null;
       }
 
       final data = jsonDecode(response.body) as Map<String, dynamic>;
       final choices = data['choices'];
       if (choices is! List || choices.isEmpty) {
-        print('⚠️ OpenRouter: response không có choices');
+        print('OpenRouter: response không có choices');
         return null;
       }
 
@@ -142,11 +142,13 @@ class ConfirmationIntentService {
       final content = message is Map<String, dynamic> ? message['content'] : null;
       final answer = content?.toString().trim();
 
-      print('✅ OpenRouter: kết quả $purpose = $answer');
+      print('OpenRouter: kết quả $purpose = $answer');
       return answer;
     } catch (e) {
-      print('❌ OpenRouter: lỗi khi $purpose: $e');
+      print('OpenRouter: lỗi khi $purpose: $e');
       return null;
     }
   }
 }
+
+
