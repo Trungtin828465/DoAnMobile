@@ -93,6 +93,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   int _scanRotationDegrees = 0;
   int _lastScanRotationDegrees = 0;
   DateTime _lastSpeechTime = DateTime.now();
+  DateTime? _lastMicButtonTapTime;
   DateTime? _lastHardwareMicButtonTime;
   DateTime? _lastSpeechErrorTime;
   DateTime? _lastListenStartTime;
@@ -147,8 +148,8 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   void _handleHardwareMicButton() {
     final now = DateTime.now();
     if (_lastHardwareMicButtonTime != null &&
-        now.difference(_lastHardwareMicButtonTime!).inMilliseconds < 700) {
-      print('Nút Bluetooth: bỏ qua do bấm quá nhanh');
+        now.difference(_lastHardwareMicButtonTime!).inMilliseconds < 180) {
+      print('Nút Bluetooth: bỏ qua tín hiệu nhiễu quá nhanh');
       return;
     }
 
@@ -2696,6 +2697,10 @@ window.resetNavigationCamera = resetCamera;
   }
   void _startListening() {
     print('STT: bấm nút mic');
+    if (_handleEmergencyMicDoubleTapIfNeeded()) {
+      return;
+    }
+
     if (_isProcessingSpeechCommand) {
       print('STT: câu nói trước đang được xử lý, vui lòng chờ app phản hồi xong');
       return;
@@ -2710,6 +2715,76 @@ window.resetNavigationCamera = resetCamera;
       _addActivityLog('Mic', 'Đã bật mic, hãy nói vào micro.');
       _startContinuousListening();
     }
+  }
+
+  bool _handleEmergencyMicDoubleTapIfNeeded() {
+    final now = DateTime.now();
+    final previousTap = _lastMicButtonTapTime;
+    _lastMicButtonTapTime = now;
+
+    final isDoubleTap = previousTap != null &&
+        now.difference(previousTap).inMilliseconds <= 900;
+    final isInNavigationFlow = _isNavigationActive ||
+        _awaitingReadyForMovement ||
+        _awaitingMovementConfirmation ||
+        _movementGuidanceStarted;
+
+    if (!isDoubleTap || !isInNavigationFlow) {
+      return false;
+    }
+
+    print('STT: phát hiện bấm mic 2 lần liên tục, hủy quy trình hiện tại');
+    unawaited(_abortCurrentNavigationAndOpenSearchMic());
+    return true;
+  }
+
+  Future<void> _abortCurrentNavigationAndOpenSearchMic() async {
+    if (_isTtsInitialized) {
+      await _ttsApi.stop();
+    }
+
+    if (_isListening) {
+      await _stopListeningQuiet();
+    }
+
+    _isNavigationActive = false;
+    _awaitingMovementConfirmation = false;
+    _awaitingReadyForMovement = false;
+    _hasAskedReadyForMovement = false;
+    _movementGuidanceStarted = false;
+    _hasAddedFinalTableApproachStep = false;
+    _hasAddedFinalLaptopApproachStep = false;
+    _pendingTargetDetection = null;
+    _lastConfirmedTargetDetection = null;
+    _lastLowConfidenceTargetDetection = null;
+    _lastLowConfidenceImagePath = null;
+    _lastSuggestedStepCount = null;
+    _scanRotationDegrees = 0;
+    _lastScanRotationDegrees = 0;
+    _navigationStepCount = 0;
+    _targetObject = null;
+    _lastMicButtonTapTime = null;
+    _lastListenStartTime = null;
+    _hasHandledCurrentSpeech = false;
+    _lastSpeechCandidate = '';
+    _isHandlingSpeechResult = false;
+    _isProcessingSpeechCommand = false;
+    _activeTask = _CameraTask.idle;
+
+    if (mounted) {
+      setState(() {
+        _recognizedText = 'Đã hủy quy trình hiện tại. Hãy nói vật cần tìm mới.';
+        _lastGuidance = 'Đã chuyển sang trạng thái tìm vật mới.';
+      });
+      _syncTargetMarkerToScene();
+    }
+
+    _addActivityLog(
+      'Mic',
+      'Bấm mic 2 lần liên tục: hủy quy trình hiện tại và mở mic tìm vật mới.',
+    );
+    _playMicTapFeedback(isStarting: true);
+    await _startContinuousListening();
   }
 
   void _playMicTapFeedback({required bool isStarting}) {
